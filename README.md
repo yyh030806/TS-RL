@@ -32,4 +32,3 @@ Note that the default parameters and model types are used in the current command
 1. Transition1x: https://gitlab.com/matschreiner/Transition1x
 2. RGD1: https://figshare.com/articles/dataset/model_reaction_database/21066901
 3. Berkholz-15: https://onlinelibrary.wiley.com/doi/abs/10.1002/jcc.23910
-4. DA-41: Private communication. Will be released upon publication
