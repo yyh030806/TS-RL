@@ -26,7 +26,7 @@ python evaluation.py --checkpoint PATH_TO_CHECKPOINT --solver ode --nfe 10
 ```
 python -m reactot.trainer.train_rpsb_ts1x
 ```
-Note that the default parameters and model types are used in the current command. More detailed instructions on model training will follow in the open-source github repo.
+Note that the default parameters and model types are used in the current command. More detailed instructions on model training will be updated soon.
 
 ## Data used in this work
 1. Transition1x: https://gitlab.com/matschreiner/Transition1x
