@@ -67,14 +67,14 @@ def check_xyz_files(rxyz, pxyz,task_id):
         print(format_error(10004, "The atom types in the reactant and product do not match.", task_id))
 
 
-def input_split(r_path,p_path,task_id,batch_size=50):
+def input_split(r_path,p_path,batch_size=50):
     """
     Split zip of reactants and products into suitable batches
     """
     import zipfile
 
     # extract xyz files from a zip file
-    extract_dir = os.path.join(task_id,'inp_xyzs')
+    extract_dir = os.path.join(os.getcwd(),'inp_xyzs')
     with zipfile.ZipFile(r_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
     with zipfile.ZipFile(p_path, 'r') as zip_ref: zip_ref.extractall(extract_dir)
 
@@ -244,7 +244,7 @@ def make_pred(representations, device, opt):
 
     return fragments_nodes, (x0_other[:, -1].unsqueeze(1), r_pos, ts_pos, p_pos)
 
-def pred_ts(rxyz, pxyz, opt, output_path, task_id):
+def pred_ts(rxyz, pxyz, opt, output_path):
     """
     Apply React-OT to provide a TS structure based on input R and P
     input:
@@ -266,14 +266,12 @@ def pred_ts(rxyz, pxyz, opt, output_path, task_id):
         all_rxyzs = [[rxyz]]
         all_pxyzs = [[pxyz]]
     else:
-        all_rxyzs, all_pxyzs = input_split(rxyz, pxyz, task_id, batch_size=opt.batch_size)
+        all_rxyzs, all_pxyzs = input_split(rxyz, pxyz, batch_size=opt.batch_size)
 
     for batch_id in range(len(all_rxyzs)):
         # load xyz files in batch
         rxyzs = all_rxyzs[batch_id]
         pxyzs = all_pxyzs[batch_id]
-        for rxyz_file, pxyz_file in zip(rxyzs, pxyzs):
-            check_xyz_files(rxyz_file, pxyz_file,task_id)
         name_index = [i.split('/')[-1].split('-r.xyz')[0] for i in rxyzs]
 
         # parse input rxn
