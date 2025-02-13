@@ -1,6 +1,8 @@
-# React-OT:
-Optimal Transport for Generating Transition State in Chemical Reactions
+# React-OT:Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
+
+Compared to OA-ReactDiff, React-OT eliminates the need of training an additional ranking model and reduces the number of inference evaluations of the denoising model from 40,000 to 50, achieving a near 1000-fold acceleration. With React-OT, highly accurate TS structures can be deterministically generated in 0.4 seconds.
+
 ![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/figure1.jpg)
 Fig. 1 | Overview of the diffusion model and optimal transport framework for generating TS.
 
