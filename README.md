@@ -1,4 +1,5 @@
-# React-OT: Optimal Transport for Generating Transition State in Chemical Reactions
+# React-OT:
+Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
 
 ## Environment set-up
