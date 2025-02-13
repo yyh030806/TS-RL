@@ -1,7 +1,7 @@
 # React-OT:
 Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
-![image]([)](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/F1_prime.pdf)
+![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/F1_prime.pdf)
 
 ## Environment set-up
 ```
