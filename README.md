@@ -1,8 +1,7 @@
 # React-OT:
 Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
-
-## Environment set-up
+[image](https://github.com/chenruduan/OAReactDiff/blob/main/figures/F2_OASE3_v2.png)## Environment set-up
 ```
 conda env create -f env.yaml
 conda activate reactot && pip install -e .
