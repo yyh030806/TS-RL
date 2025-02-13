@@ -2,6 +2,7 @@
 ==============================
 
 OA-ReactDiff is the first diffusion-based generative model for generating 3D chemical reactions, which not only accelerates the search for 3D transition state in chemical reactions by a factor of 1000, but also generates and explores new and unknown chemical reactions. 
+
 In this work, we developed React-OT, an optimal transport approach to generate TSs of an elementary reaction in a fully deterministic manner.Compared to OA-ReactDiff, React-OT eliminates the need of training an additional ranking model and reduces the number of inference evaluations of the denoising model from 40,000 to 50, achieving a near 1000-fold acceleration. With React-OT, highly accurate TS structures can be deterministically generated in 0.4 seconds.
 
 ![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/figure1.jpg)
