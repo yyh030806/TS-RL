@@ -2,6 +2,7 @@
 Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
 ![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/figure1.jpg)
+Fig. 1 | Overview of the diffusion model and optimal transport framework for generating TS.
 
 ## Environment set-up
 ```
