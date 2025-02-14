@@ -1,12 +1,17 @@
 # React-OT:Optimal Transport for Generating Transition State in Chemical Reactions
 ==============================
 
-OA-ReactDiff is the first diffusion-based generative model for generating 3D chemical reactions, which not only accelerates the search for 3D transition state in chemical reactions by a factor of 1000, but also generates and explores new and unknown chemical reactions. 
-
-In this work, we developed React-OT, an optimal transport approach to generate TSs of an elementary reaction in a fully deterministic manner.Compared to OA-ReactDiff, React-OT eliminates the need of training an additional ranking model and reduces the number of inference evaluations of the denoising model from 40,000 to 50, achieving a near 1000-fold acceleration. With React-OT, highly accurate TS structures can be deterministically generated in 0.4 seconds.
+In this work, we developed React-OT, an optimal transport approach to generate TSs of an elementary reaction in a fully deterministic manner. It is based on our previously developed first diffusion-based generative model for generating 3D chemical reactions, OA-ReactDiff. React-OT has been improved for given reactants and products (double-ended search), enabling it to generate highly accurate transition state structures while maintaining an extremely high inference speed.
 
 ![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/figure1.jpg)
-Fig. 1 | Overview of the diffusion model and optimal transport framework for generating TS.
+Fig. 1 | Overview of the diffusion model and optimal transport framework for generating TS. a. Learning the joint distribution of structures in elementary reactions (reactant in red, TS in yellow, and product in blue). b. Stochastic inference with inpainting in OA-ReactDiff. c. Deterministic inference with React-OT.
+
+We trained React-OT on Transition1x,a dataset that contains paired reactants, TSs, and products calculated from climbing-image NEB obtained with DFT (ωB97x/6-31G(d)).In React-OT, the object-aware version of LEFTNet is used as the scoring network to fit the transition kernel (see LEFTNet).React-OT achieves a mean RMSD of 0.103 Å between generated and true TS structures on the set-aside testreactions of Transition1x, significantly improved upon previous state-of-the-art results on ML generation for TS structures.
+
+![image](https://github.com/deepprinciple/react-ot/blob/main/reactot/Figures/figure2.jpg)
+Fig. 2 | Structural and energetic performance of diffusion and optimal transport generated TS structures.  a.Cumulative probability for structure root mean square deviation (RMSD) (left) and absolute energy error (|∆ETS|) (right) between the true and generated TS on 1,073 set-aside test reactions.  b. Reference TS structure, OA-ReactDiff TS sample (red), and React-OT structure (orange) for select reactions. c. Histogram (gray, left y axis) and cumulative probability(blue, right y axis) showing the difference of RMSD (left) and |∆ETS|(right) between OA-ReactDiff recommended and React-OT structures compared to reference TS.d. Inference time in seconds for single-shot OA-ReactDiff, 40-shot OA-ReactDiff with recommender, and React-OT .
+
+We envision that the remarkable accuracy and rapid inference of React-OT will be highly useful when integrated with the current high-throughput TS search workflow. This integration will facilitate the exploration of chemical reactions with unknown mechanisms.
 
 ## Environment set-up
 ```
