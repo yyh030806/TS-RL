@@ -1,0 +1,89 @@
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "The project to build the Docker image for"
+        required: true
+        default: ""
+        type: string
+
+      branch:
+        description: "The branch to checkout"
+        required: true
+        default: "main"
+        type: string
+      runner:
+        description: "The runner to run the job"
+        required: true
+        default: ""
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.runner }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.branch }}
+
+    - name: get-next-version
+      uses: reecetech/version-increment@2024.10.1
+      id: version
+      with:
+        scheme: semver
+        increment: patch
+
+    - name: login-to-volcengine
+      env:
+        CR_ROBOT_NAME: ${{ secrets.CR_ROBOT_NAME }}
+        CR_ROBOT_PASSWORD: ${{ secrets.CR_ROBOT_PASSWORD }}
+      run: |
+        docker login --username=$CR_ROBOT_NAME --password=$CR_ROBOT_PASSWORD deepprinciple-cn-beijing.cr.volces.com
+        if [ "${{ github.event.inputs.runner }}" == "self-hosted" ]; then
+            echo "USE_PROXY=true" >> $GITHUB_ENV
+          else
+            echo "USE_PROXY=false" >> $GITHUB_ENV
+          fi
+        echo $GITHUB_ENV
+
+    - name: Set up Docker Build Context
+      id: build-context
+      run: |
+        PROJECT_INPUT=${{ github.event.inputs.project }}
+        if [ -z "$PROJECT_INPUT" ]; then
+          echo "No project specified. Exiting."
+          exit 1
+        fi
+        DOCKER_PATH="./$PROJECT_INPUT/docker"
+        if [ ! -d "$DOCKER_PATH" ]; then
+          echo "Docker folder does not exist for project: $PROJECT_INPUT"
+          exit 1
+        fi
+        echo "DOCKER_PATH=$DOCKER_PATH" >> $GITHUB_ENV
+        echo "PROJECT_NAME=$PROJECT_INPUT" >> $GITHUB_ENV
+
+    - name: Build Docker Image
+      run: |
+        cd $PROJECT_NAME
+        ECR_REGISTRY=deepprinciple-cn-beijing.cr.volces.com
+        VERSION=${{ steps.version.outputs.version }}
+        IMAGE_TAG=$PROJECT_NAME:$VERSION
+        docker build \
+        --build-arg USE_PROXY=${{ env.USE_PROXY}} \
+        --build-arg PROXY_SERVER=${{ secrets.PROXY_SERVER }} \
+        --build-arg TOS_ACCESS_KEY=${{ secrets.TOS_ACCESS_KEY }} \
+        --build-arg TOS_SECRET_KEY=${{ secrets.TOS_SECRET_KEY }} \
+        --build-arg ACCESS_KEY=${{ secrets.TOS_ACCESS_KEY }} \
+        --build-arg SECRET_KEY=${{ secrets.TOS_SECRET_KEY }} \
+        -t $IMAGE_TAG -f docker/Dockerfile .
+        REMOTE_TAG=$ECR_REGISTRY/proj-dev/$IMAGE_TAG
+        docker tag $IMAGE_TAG $REMOTE_TAG
+        echo "Promoting to registry with tag $REMOTE_TAG"
+        docker push $REMOTE_TAG
