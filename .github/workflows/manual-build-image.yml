@@ -1,0 +1,61 @@
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "The runner to run the job"
+        required: true
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.runner }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        ref: main
+
+    - name: get-next-version
+      uses: reecetech/version-increment@2024.10.1
+      id: version
+      with:
+        scheme: semver
+        increment: patch
+
+    - name: login-to-volcengine
+      env:
+        CR_ROBOT_NAME: ${{ secrets.CR_ROBOT_NAME }}
+        CR_ROBOT_PASSWORD: ${{ secrets.CR_ROBOT_PASSWORD }}
+      run: |
+        docker login --username=$CR_ROBOT_NAME --password=$CR_ROBOT_PASSWORD deepprinciple-cn-beijing.cr.volces.com
+        if [ "${{ github.event.inputs.runner }}" == "self-hosted" ]; then
+            echo "USE_PROXY=true" >> $GITHUB_ENV
+          else
+            echo "USE_PROXY=false" >> $GITHUB_ENV
+          fi
+        echo $GITHUB_ENV
+
+    - name: Build Docker Image
+      run: |
+        ECR_REGISTRY=deepprinciple-cn-beijing.cr.volces.com
+        VERSION=${{ steps.version.outputs.version }}
+        IMAGE_TAG=app:$VERSION
+        docker build \
+          --build-arg USE_PROXY=${{ env.USE_PROXY}} \
+          --build-arg PROXY_SERVER=${{ secrets.PROXY_SERVER }} \
+          --build-arg TOS_ACCESS_KEY=${{ secrets.TOS_ACCESS_KEY }} \
+          --build-arg TOS_SECRET_KEY=${{ secrets.TOS_SECRET_KEY }} \
+          --build-arg ACCESS_KEY=${{ secrets.TOS_ACCESS_KEY }} \
+          --build-arg SECRET_KEY=${{ secrets.TOS_SECRET_KEY }} \
+          -t $IMAGE_TAG -f Dockerfile .
+        REMOTE_TAG=$ECR_REGISTRY/proj-dev/$IMAGE_TAG
+        docker tag $IMAGE_TAG $REMOTE_TAG
+        echo "Promoting to registry with tag $REMOTE_TAG"
+        docker push $REMOTE_TAG
