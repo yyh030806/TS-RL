@@ -1,11 +1,17 @@
 FROM deepprinciple-cn-beijing.cr.volces.com/public-registry/python:3.10.16
 
-ENV http_proxy http://100.68.166.13:3128
-ENV https_proxy http://100.68.166.13:3128
-ENV HTTP_PROXY http://100.68.166.13:3128
-ENV HTTPS_PROXY http://100.68.166.13:3128
+ARG USE_PROXY=true
+ARG PROXY_SERVER
+ENV http_proxy ${PROXY_SERVER}
+ENV https_proxy ${PROXY_SERVER}
 
-ENV no_proxy mirrors.tuna.tsinghua.edu.cn
+ENV HTTP_PROXY ${PROXY_SERVER}
+ENV HTTPS_PROXY ${PROXY_SERVER}
+
+RUN echo $USE_PROXY
+
+# If USE_PROXY is false, unset the proxy environment variables 
+RUN if [ "$USE_PROXY" = "false" ]; then unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; fi
 
 COPY . /app
 
@@ -20,7 +26,3 @@ RUN apt-get update && apt-get -y install build-essential python3-dev python3-pip
 RUN pip install torch_scatter -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
 RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-
-# RUN TMPDIR=/home/ubuntu/tmp/ pip install torch-sparse -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
-
-# RUN TMPDIR=/home/ubuntu/tmp/ pip install torch-cluster -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
