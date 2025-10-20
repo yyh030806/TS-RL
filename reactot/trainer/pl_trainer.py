@@ -1002,7 +1002,32 @@ class SBModule(LightningModule):
             "scaled_err": loss_terms["scaled_err"],
         }
         return info
+    
+    @torch.no_grad()
+    def sample_batch_traj(
+        self,
+        batch: List,
+        return_rmsd: bool = False,
+        write_xyz: bool = False,
+        batch_idx: int = 0,
+        bz: int = 32,
+        localpath: str = "sb/ot_ode-10/",
+        refpath: str = "ref_ts/",
+        return_all: bool = False,
+    ):
+        self.ddpm.eval()
 
+        representations, conditions = batch
+        x0, x1, cond, x0_size, x0_other = self.ddpm.sample_batch(
+            representations, conditions, return_timesteps=False, training=False)
+        
+        # all samples: [n_atoms, 3]
+        # all_log_probs: [n_atoms] 
+        with torch.no_grad():
+            all_samples, all_log_probs = self.ddpm.sample_with_log_prob(
+                x1, representations, conditions, nfe=self.nfe)
+        return all_samples, all_log_probs
+        
     @torch.no_grad()
     def eval_sample_batch(
         self,
@@ -1021,7 +1046,7 @@ class SBModule(LightningModule):
         representations, conditions = batch
         x0, x1, cond, x0_size, x0_other = self.ddpm.sample_batch(
             representations, conditions, return_timesteps=False, training=False)
-
+        
         with torch.no_grad():
             xs, pred_x0 = self.ddpm.sample(
                 x1, representations, conditions, nfe=self.nfe, ot_ode=self.ot_ode)

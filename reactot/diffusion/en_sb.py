@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Tuple, Union
 
+import math
 import numpy as np
 from tqdm import tqdm
 import torch
@@ -450,7 +451,163 @@ class EnSB(nn.Module):
 
         stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
         return stack_bwd_traj(xs), stack_bwd_traj(xs)
+    
+    @torch.no_grad()
+    def sample_with_log_prob(
+        self, 
+        x1: torch.Tensor, 
+        representations: List[dict], 
+        conditions: dict,
+        nfe: Optional[int] = None,
+        sde_type: str = 'sde',
+        noise_level: float = 0.7,
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+        """
+        使用反向 SDE 过程进行采样，并记录每一步的对数概率。
 
+        Args:
+            x1 (torch.Tensor): 初始噪声样本 (对应于 t=1 的状态)。
+            representations (List[dict]): 包含节点特征和掩码的表示。
+            conditions (dict): 模型所需的条件信息。
+            nfe (Optional[int]): 函数评估次数 (采样步数)。如果为 None, 则使用 T-1。
+            sde_type (str): SDE 的类型, 'sde' 或 'cps'。
+            noise_level (float): SDE 过程中的噪声水平。
+
+        Returns:
+            Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+                - all_prev_samples: 每一步生成的样本 (x_{t-1}) 的列表。
+                - all_log_probs: 每一步生成的样本的对数概率的列表。
+                - all_means: 每一步采样所基于的高斯分布均值的列表。
+                - all_stds: 每一步 SDE 过程中随机项尺度的列表。
+        """
+        
+        # 1. 准备采样所需的数据
+        masks = [repre["mask"] for repre in representations]
+        combined_mask = torch.cat(masks)
+        edge_index = get_edges_index(combined_mask, remove_self_edge=True)
+        fragments_nodes = [repr["size"] for repr in representations]
+        n_frag_switch = get_n_frag_switch(fragments_nodes)
+        
+        xh_t = [
+            torch.cat(
+                [repre[feature_type] for feature_type in FEATURE_MAPPING],
+                dim=1,
+            )
+            for repre in representations
+        ]
+
+        # 2. 准备采样的时间步
+        nfe = nfe or self.T - 1
+        assert 0 < nfe < self.T, "Number of function evaluations must be between 1 and T-1"
+        steps = utils.space_indices(self.T, nfe + 1)
+        steps = steps[::-1]
+        
+        _cond = conditions["condition"] if self.ts_guess else conditions
+        t_size = representations[self.idx]["size"].size(0)
+        
+        # 3. 开始采样
+        sample = x1.float() # 确保使用 fp32 以保证精度
+        
+        # 初始化列表以存储每一步的输出
+        all_samples = [sample]
+        all_log_probs = []
+        
+        # 从 T-1 到 1 进行反向采样
+        for t_index in tqdm(steps, desc="SDE Sampling with LogProb"):
+            if t_index == 0:
+                continue
+
+            # 4. 获取模型输出 (速度场 v)
+            xh_t[self.idx][:, : self.pos_dim] = sample
+            
+            # 模型需要一个 [0, 1] 范围内的浮点数时间
+            t_float = t_index / self.T
+            tt = torch.full((t_size, 1), t_float, device=sample.device)
+            
+            net_eps_xh, _ = self.dynamics(
+                    xh=xh_t,
+                    edge_index=edge_index,
+                    t=tt,
+                    conditions=_cond,
+                    n_frag_switch=n_frag_switch,
+                    combined_mask=combined_mask,
+                    edge_attr=None,
+            )
+            model_outputs = net_eps_xh[self.idx][:, :self.pos_dim].float()
+            
+            # ------------------- SDE Step Logic Begins Here -------------------
+            
+            # 5. 准备 SDE 步骤所需的参数
+            sigma_t = t_index / self.T
+            sigma_t_prev = (t_index - 1) / self.T
+            dt = sigma_t_prev - sigma_t  # dt 是负值 (-1/T)
+
+            if sde_type == 'sde':
+                # 5.1 计算随机项的尺度 (标准差)
+                # 当 t_index=T 时, sigma_t=1, 导致分母为0, 这里进行保护
+                sigma_max = (self.T - 1) / self.T
+                safe_sigma_t = sigma_t if sigma_t < 1.0 else sigma_max
+                std_dev_t = math.sqrt(safe_sigma_t / (1 - safe_sigma_t)) * noise_level
+
+                # 5.2 计算上一步样本的均值 (prev_sample_mean)
+                term1 = sample * (1 + std_dev_t**2 / (2 * safe_sigma_t) * dt)
+                term2 = model_outputs * (1 + std_dev_t**2 * (1 - safe_sigma_t) / (2 * safe_sigma_t)) * dt
+                prev_sample_mean = term1 + term2
+                
+                # 5.3 计算用于采样的高斯分布的标准差
+                sampling_std = std_dev_t * math.sqrt(-dt)
+
+                # 5.4 生成上一步的样本
+                noise = torch.randn_like(model_outputs)
+                prev_sample = prev_sample_mean + sampling_std * noise
+
+                # 5.5 计算对数概率 log p(prev_sample | sample)
+                log_prob = (
+                    -((prev_sample.detach() - prev_sample_mean) ** 2) / (2 * sampling_std**2)
+                    - math.log(sampling_std)
+                    - math.log(math.sqrt(2 * math.pi))
+                )
+
+            elif sde_type == 'cps':
+                # 5.1 计算随机项的尺度 (标准差)
+                std_dev_t = sigma_t_prev  * math.sin(noise_level * math.pi / 2)
+                
+                # 5.2 估计 x0 和 x1
+                pred_original_sample = sample - sigma_t * model_outputs
+                noise_estimate = sample + model_outputs * (1 - sigma_t)
+                
+                # 5.3 计算上一步样本的均值 (prev_sample_mean)
+                # 使用 torch.sqrt 时确保内部值为正
+                variance_term = sigma_t_prev**2 - std_dev_t**2
+                term1 = pred_original_sample * (1 - sigma_t_prev)
+                term2 = noise_estimate * torch.sqrt(torch.clamp(variance_term, min=1e-8))
+                prev_sample_mean = term1 + term2
+
+                # 5.4 计算用于采样的高斯分布的标准差
+                sampling_std = std_dev_t
+
+                # 5.5 生成上一步的样本
+                noise = torch.randn_like(model_outputs)
+                prev_sample = prev_sample_mean + sampling_std * noise
+
+                # 5.6 计算对数概率 (在这里忽略了常数项)
+                log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
+            
+            else:
+                raise ValueError(f"Unknown sde_type: {sde_type}")
+            
+            # 6. 后处理和存储结果
+            # 沿着除了批次维度之外的所有维度取平均
+            log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+            
+            all_samples.append(prev_sample)
+            all_log_probs.append(log_prob)
+
+            # 7. 更新 sample 以用于下一个循环
+            sample = prev_sample
+            
+        return all_samples, all_log_probs
+    
     @torch.no_grad()
     def sample(self, x1, representations, conditions,
                clip_denoise=True, nfe=None, log_count=10, verbose=False, ot_ode=True):
@@ -546,7 +703,6 @@ class EnSB(nn.Module):
             )
 
         torch.cuda.empty_cache()
-
         return xs, pred_x0
 
     ###################Exponential Integrator
