@@ -7,7 +7,7 @@ class EnergyScorer:
     
     def __call__(self, st_tar, st_pred):
         deltaE = calc_deltaE(st_tar, st_pred)
-        return deltaE
+        return abs(deltaE)
         
 if __name__ == '__main__':
     st_tar = 'H 0 0 0; Cl 0 0 1'
