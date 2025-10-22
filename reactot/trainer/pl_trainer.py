@@ -1021,12 +1021,56 @@ class SBModule(LightningModule):
         x0, x1, cond, x0_size, x0_other = self.ddpm.sample_batch(
             representations, conditions, return_timesteps=False, training=False)
         
-        # all samples: [n_atoms, 3]
-        # all_log_probs: [n_atoms] 
+
         with torch.no_grad():
             all_samples, all_log_probs = self.ddpm.sample_with_log_prob(
-                x1, representations, conditions, nfe=self.nfe)
-        return all_samples, all_log_probs
+                x1, representations, conditions, nfe=self.nfe) 
+              
+        atom_counts = x0_size.tolist()
+        num_molecules = len(atom_counts)
+        
+        # process atoms
+        split_tensors = torch.split(x0_other[:,-1], atom_counts, dim=0)
+        final_idx = list(split_tensors)
+                
+        # process target
+        split_tensors = torch.split(x0, atom_counts, dim=0)
+        final_targets = list(split_tensors)
+        
+        # process samples
+        num_timesteps = len(all_samples)
+        molecule_trajectories_as_list = [[] for _ in range(num_molecules)]
+        for t in range(num_timesteps):
+            timestep_tensor = all_samples[t]
+            split_tensors = torch.split(timestep_tensor, atom_counts, dim=0)
+
+            for i in range(num_molecules):
+                molecule_trajectories_as_list[i].append(split_tensors[i])
+                
+        final_trajectories = []
+        for i in range(num_molecules):
+            trajectory_tensor = torch.stack(molecule_trajectories_as_list[i], dim=0)
+            final_trajectories.append(trajectory_tensor)
+            
+        molecule_logps_as_list = [[] for _ in range(num_molecules)]
+        
+        # process log_prob
+        num_timesteps = len(all_log_probs)
+        for t in range(num_timesteps):
+            timestep_logp_tensor = all_log_probs[t]
+            split_logp_tensors = torch.split(timestep_logp_tensor, atom_counts, dim=0)
+
+            for i in range(num_molecules):
+                molecule_avg_logp_at_t = split_logp_tensors[i].mean()
+                molecule_logps_as_list[i].append(molecule_avg_logp_at_t)
+
+        final_logps = []
+        for i in range(num_molecules):
+            logp_series_tensor = torch.stack(molecule_logps_as_list[i], dim=0)
+            final_tensor = logp_series_tensor.unsqueeze(1)
+            final_logps.append(final_tensor)
+
+        return final_trajectories, final_logps, final_targets, final_idx
         
     @torch.no_grad()
     def eval_sample_batch(

@@ -513,7 +513,7 @@ class EnSB(nn.Module):
         all_log_probs = []
         
         # 从 T-1 到 1 进行反向采样
-        for t_index in tqdm(steps, desc="SDE Sampling with LogProb"):
+        for t_index in steps:
             if t_index == 0:
                 continue
 
@@ -599,6 +599,7 @@ class EnSB(nn.Module):
             # 6. 后处理和存储结果
             # 沿着除了批次维度之外的所有维度取平均
             log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+            
             
             all_samples.append(prev_sample)
             all_log_probs.append(log_prob)

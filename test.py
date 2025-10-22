@@ -62,8 +62,8 @@ def main(opt):
     all_samples, all_log_probs = model.sample_batch_traj(
         batch
     )
-    print(all_samples[0][:5])
-    print(all_log_probs[0][:5])
+    print(all_samples[0].shape)
+    print(all_log_probs[0].shape)
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -87,3 +87,9 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
     main(opt)
+
+# [batch_size, ch, h, w]
+
+# [nod_i, 3]
+# [node_1, node_2, ..., node_batch_size]
+# [node_1 + node2 + ... + node_batch_size, 3]
