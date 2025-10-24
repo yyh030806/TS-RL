@@ -8,9 +8,10 @@ from reactot.model.leftnet import LEFTNet
 
 from ts_rl.sampler import KRepeatSampler
 from ts_rl.energy_scorer import EnergyScorer
+from ts_rl.stat_tracking import PerMoleculeStatTracker
 
 
-torch.serialization.add_safe_globals([LEFTNet])
+# torch.serialization.add_safe_globals([LEFTNet])
 
 device = 'cuda'
 
@@ -66,6 +67,8 @@ def load_model(checkpoint_path, device='cuda'):
     model.setup(stage="fit", device=device, swapping_react_prod=False)
     return model
 
+
+
 def main(args):
     
     reference_model = load_model(args.checkpoint_path)
@@ -73,20 +76,25 @@ def main(args):
     train_dataset = reference_model.val_dataset
     train_sampler = KRepeatSampler(train_dataset, args.repeat_k, args.sample_batch_size)
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, collate_fn=train_dataset.collate_fn)
-    
 
+    sample_batch_num = len(train_loader)
+    total_batch_size = sample_batch_num*args.sample_batch_size  # total sample number e.g. 2048
+
+    model = load_model(args.checkpoint_path)
+    model.nfe = args.sample_time_step
+
+
+    global_epoch=0
     while True:
-        old_model = load_model(args.checkpoint_path)
-        old_model.nfe = args.sample_time_step
-        
         # sample
-        idx_list = []
+        idx_list = []  
         traj_list = []
         log_prob_list = []
         target_list = []
         
+        model.eval()
         for batch in tqdm(train_loader):
-            traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
+            traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
             traj_list.extend(traj_bath)
             log_prob_list.extend(log_prob_batch)
             target_list.extend(target_batch)
@@ -95,33 +103,68 @@ def main(args):
         # compute rewards
         scorer = EnergyScorer()
         reward_list = []
+        target_mol_list = []
+        predict_mol_list = []
         for traj, target, idx in zip(traj_list, target_list, idx_list):
             predict = traj[-1]
             target_mol = decode_molecule(target, idx)
             predict_mol = decode_molecule(predict, idx) 
             reward = scorer(predict_mol, target_mol)
-            reward_list.append(reward)
             
-        # compute advantages
+            reward_list.append(reward)
+            target_mol_list.append(target_mol)
+            predict_mol_list.append(predict_mol)
         
+        # compute advantages
+        tracker = PerMoleculeStatTracker()
+        advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
+        advantages = torch.tensor(advantages, device=model.device)  # [N]
+
+        log_prob_t = torch.stack(log_prob_list) # [N,2,1]
         # train
-        for i in range(args.train_epoch):
-            # rebatch data in buffer
-            for j in range(args.train_batch_num):
-                for k in range(args.train_timestep_num):
-                    # calculate old_logp
-                    # update
-                    pass
+        model.train()
+        for inner_epoch_id in range(args.train_epoch):
+            # shuffle 
+            perm = torch.randperm(total_batch_size, device=model.device)
+            advantages = advantages[perm]
+            log_prob_t = log_prob_t[perm]
+            # other required list need shuffled together  TODO
+
+            # rebatch
+            rebatch_advantages = advantages.reshape(-1, total_batch_size//args.train_batch_size)
+            rebatch_log_prob_t = log_prob_t.reshape(-1, total_batch_size//args.train_batch_size)
+            # print(rebatch_advantages.shape)
+            # print(rebatch_log_prob_t.shape)
+
+            for j, (sample_adv, sample_logp) in tqdm(
+                list(enumerate(zip(rebatch_advantages, rebatch_log_prob_t))),
+                desc=f"Epoch {global_epoch}.{inner_epoch_id}: training",
+                position=0,
+            ):
+                train_timesteps = [step_index  for step_index in range(args.train_timestep_num)]
+                for k in train_timesteps:
+                    ...
+
+
+        global_epoch += 1
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--repeat_k",     type=int,   default=4)
+    parser.add_argument("--repeat_k",     type=int,   default=2)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=5)
+    parser.add_argument("--sample_time_step",     type=int,   default=2)
     parser.add_argument("--sample_batch_size",    type=int,   default=128)
     parser.add_argument("--train_batch_size",     type=int,   default=16)
     parser.add_argument("--train_epoch",     type=int,   default=16)
+    parser.add_argument("--train_batch_num",     type=int,   default=16)
+    parser.add_argument("--rl_type",     type=str,   default='grpo')
+
+    parser.add_argument("--train_timestep_num",     type=int,   default=2)
+    parser.add_argument("--adv_clip_max", type=float, default=5.0)
+
+
     
     parser.add_argument("--checkpoint_path",     type=str, default='./reactot-pretrained.ckpt')
 
