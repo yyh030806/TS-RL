@@ -69,9 +69,124 @@ def load_model(checkpoint_path, device='cuda'):
 
 
 
+def process_samples(samples, log=False):
+
+    for i, sample in enumerate(samples):
+        new_dic = {}
+        for subk in sample['representations'][0].keys():
+            new_subk_tensor = torch.stack([_[subk] for _ in sample['representations']])
+            new_dic[subk] = new_subk_tensor
+        samples[i]['representations'] = new_dic
+
+    new_samples = {}
+    for k in samples[0].keys():
+        if isinstance(samples[0][k], list):
+            new_ele = [sub_x for n in samples for sub_x in n[k] ]
+        elif isinstance(samples[0][k], dict):
+            new_ele = dict()
+            for subk in samples[0][k].keys():
+                new_ele[subk] = torch.cat([n[k][subk] for n in samples], dim=1)
+
+        else:
+            new_ele = torch.cat([s[k] for s in samples], dim=0)
+        new_samples[k] = new_ele
+    
+    if log:
+        print_samples(new_samples)
+
+    return new_samples
+
+
+def print_samples(samples):
+    for k in samples.keys():
+        if isinstance(samples[k], list):
+            print('list:', k, len(samples[k]), 'each element:', type(samples[k][0]))
+        elif isinstance(samples[k], torch.Tensor):
+            print('tensor:', k, samples[k].shape)
+        elif isinstance(samples[k], dict):
+            print(f'dict: {k}')
+            for subk in samples[k].keys():
+                print(f'in dict: {subk} - {samples[k][subk].shape}')
+
+
+
+def reshuffle(samples, perm, device):
+    for k in samples.keys():
+        if isinstance(samples[k], torch.Tensor):
+            samples[k] = samples[k][perm]
+        elif isinstance(samples[k], list):
+            samples[k] = [samples[k][i] for i in perm]
+        elif isinstance(samples[k], dict):
+            if k == 'representations':
+                zero_tensor = torch.zeros(1, device=device).long()
+                sample_sizes = samples[k]['size'][0]  
+                boundaries = torch.cat([zero_tensor, sample_sizes.cumsum(dim=0)], dim=0)  # [N+1]
+                
+                group_indices = [
+                    torch.arange(boundaries[i], boundaries[i+1], device=device, dtype=torch.long) 
+                    for i in range(samples[k]['size'].shape[1])  # 遍历所有样本
+                ]
+                new_atom_perm = torch.cat([group_indices[i] for i in perm])
+                
+                samples[k]['size'] = samples[k]['size'][:, perm]  # [3, N] 
+                samples[k]['pos'] = samples[k]['pos'][:, new_atom_perm, :]  # [3, total_atoms, 3]
+                samples[k]['one_hot'] = samples[k]['one_hot'][:, new_atom_perm, :]  # [3, total_atoms, 5]
+                samples[k]['charge'] = samples[k]['charge'][:, new_atom_perm, :]  # [3, total_atoms, 1]
+                samples[k]['mask'] = samples[k]['mask'][:, new_atom_perm]  # [3, total_atoms]
+    return samples
+
+
+
+def create_batches(samples, batch_size, device):
+    total_size = samples['conditions'].shape[0]
+    num_batches = (total_size + batch_size - 1) // batch_size  # 向上取整
+    
+    batches = []
+    
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, total_size)
+        actual_batch_size = end_idx - start_idx
+        
+        batch = {}
+        
+        for k in samples.keys():
+            if isinstance(samples[k], torch.Tensor):
+                batch[k] = samples[k][start_idx:end_idx]
+                
+            elif isinstance(samples[k], list):
+                batch[k] = samples[k][start_idx:end_idx]
+                
+            elif isinstance(samples[k], dict):
+                if k == 'representations':
+                    batch[k] = {}
+    
+                    batch[k]['size'] = samples[k]['size'][:, start_idx:end_idx]  # [3, batch_size]
+
+                    zero_tensor = torch.zeros(1, device=device).long()
+                    batch_sizes = samples[k]['size'][0, start_idx:end_idx]  # 当前batch的原子数
+
+                    if start_idx == 0:
+                        global_start = 0
+                    else:
+                        global_start = samples[k]['size'][0, :start_idx].sum().item()
+                    global_end = global_start + batch_sizes.sum().item()
+                    
+                    batch[k]['pos'] = samples[k]['pos'][:, global_start:global_end, :]
+                    batch[k]['one_hot'] = samples[k]['one_hot'][:, global_start:global_end, :]
+                    batch[k]['charge'] = samples[k]['charge'][:, global_start:global_end, :]
+                    batch[k]['mask'] = samples[k]['mask'][:, global_start:global_end]
+        
+        batches.append(batch)
+    
+    return batches
+
+
+
 def main(args):
     
     reference_model = load_model(args.checkpoint_path)
+    reference_model.nfe = args.sample_time_step
     
     train_dataset = reference_model.val_dataset
     train_sampler = KRepeatSampler(train_dataset, args.repeat_k, args.sample_batch_size)
@@ -83,67 +198,94 @@ def main(args):
     model = load_model(args.checkpoint_path)
     model.nfe = args.sample_time_step
 
+    samples = []
+
+    scorer = EnergyScorer()
+    
 
     global_epoch=0
     while True:
         # sample
-        idx_list = []  
-        traj_list = []
-        log_prob_list = []
-        target_list = []
-        
         model.eval()
         for batch in tqdm(train_loader):
+            representations, conditions = batch
             traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
-            traj_list.extend(traj_bath)
-            log_prob_list.extend(log_prob_batch)
-            target_list.extend(target_batch)
-            idx_list.extend(idx_batch)
-        
-        # compute rewards
-        scorer = EnergyScorer()
-        reward_list = []
-        target_mol_list = []
-        predict_mol_list = []
-        for traj, target, idx in zip(traj_list, target_list, idx_list):
-            predict = traj[-1]
-            target_mol = decode_molecule(target, idx)
-            predict_mol = decode_molecule(predict, idx) 
-            reward = scorer(predict_mol, target_mol)
-            
-            reward_list.append(reward)
-            target_mol_list.append(target_mol)
-            predict_mol_list.append(predict_mol)
-        
-        # compute advantages
-        tracker = PerMoleculeStatTracker()
-        advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
-        advantages = torch.tensor(advantages, device=model.device)  # [N]
 
-        log_prob_t = torch.stack(log_prob_list) # [N,2,1]
+            # compute rewards
+            reward_list = []
+            target_mol_list = []
+            predict_mol_list = []
+
+            for traj, target, idx in zip(traj_bath, target_batch, idx_batch):
+                predict = traj[-1]
+                target_mol = decode_molecule(target, idx)
+                predict_mol = decode_molecule(predict, idx) 
+                # reward = scorer(predict_mol, target_mol)
+                
+                reward_list.append(0)
+                target_mol_list.append(target_mol)
+                predict_mol_list.append(predict_mol)
+            
+
+            tracker = PerMoleculeStatTracker()
+            advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
+            advantages = torch.tensor(advantages, device=model.device)  # [N]
+
+
+            samples.append(
+                {
+                    "representations": representations,
+                    "conditions":conditions,
+                    "trajs": traj_bath,
+                    "target_mols": target_mol_list,
+                    "log_probs": torch.stack(log_prob_batch).squeeze(-1),
+                    "rewards": torch.tensor(reward_list, device=model.device),
+                    "advantages": advantages
+                }
+            )
+
+
+        '''
+            representations[dict]:
+                size: [3,N]
+                pos: [3,sum(size), 3]
+                one_hot: [3,sum(size), 5]
+                charge: [3,sum(size), 1]
+                mask: [3,sum(size)]
+                3 indictes the p1, p2 and (p1+p2)/2
+            conditions[tensor]: [N,1]
+            trajs[list]: [N]*tensor of vary size
+            log_probs[tensor]: [N,2]
+            rewards[tensor]: [N]
+            advantages[tensor]: [N]
+        '''
+        samples = process_samples(samples, log=True)
+
         # train
         model.train()
         for inner_epoch_id in range(args.train_epoch):
-            # shuffle 
+            # shuffle
             perm = torch.randperm(total_batch_size, device=model.device)
-            advantages = advantages[perm]
-            log_prob_t = log_prob_t[perm]
-            # other required list need shuffled together  TODO
+
+            samples = reshuffle(samples, perm, model.device)
 
             # rebatch
-            rebatch_advantages = advantages.reshape(-1, total_batch_size//args.train_batch_size)
-            rebatch_log_prob_t = log_prob_t.reshape(-1, total_batch_size//args.train_batch_size)
-            # print(rebatch_advantages.shape)
-            # print(rebatch_log_prob_t.shape)
+            batch_samples = create_batches(samples, args.train_batch_size, model.device)
 
-            for j, (sample_adv, sample_logp) in tqdm(
-                list(enumerate(zip(rebatch_advantages, rebatch_log_prob_t))),
+
+            for j, sub_sample in tqdm(
+                list(enumerate(batch_samples)),
                 desc=f"Epoch {global_epoch}.{inner_epoch_id}: training",
                 position=0,
             ):
                 train_timesteps = [step_index  for step_index in range(args.train_timestep_num)]
                 for k in train_timesteps:
-                    ...
+                    advantages = torch.clamp(
+                            sub_sample["advantages"],
+                            -args.adv_clip_max,
+                            args.adv_clip_max,
+                        )
+                    assert None
 
 
         global_epoch += 1
