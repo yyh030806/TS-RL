@@ -30,7 +30,7 @@ def rmsd_core(mol1, mol2, threshold=0.5, same_order=False):
         return rmsd
     total_permutations = 1
     for c in count:
-        total_permutations *= np.math.factorial(c)  # type: ignore
+        total_permutations *= np.emath.factorial(c)  # type: ignore
     if total_permutations < 1e4:
         bfm = BruteForceOrderMatcher(mol1)
         _, rmsd = bfm.fit(mol2)
@@ -69,7 +69,6 @@ def pymatgen_rmsd(
             mol1, mol2_reflect, threshold, same_order=same_order)
         rmsd = min(rmsd, rmsd_reflect)
     return rmsd
-
 
 def batch_rmsd(
     fragments_nodes: List[Tensor],
@@ -125,5 +124,27 @@ def batch_rmsd_sb(
             threshold=threshold,
             same_order=same_order,
         )
+        
         rmsds.append(min(rmsd, 1.0))
     return rmsds
+
+def mol_string_to_pymatgen(mol_string):
+    """
+    将单行字符串格式的分子坐标转换为 pymatgen 的 Molecule 对象。
+    """
+    species = []
+    coords = []
+    atoms_data = mol_string.strip().split(';')
+    for atom_data in atoms_data:
+        if not atom_data.strip():
+            continue
+        parts = atom_data.strip().split()
+        species.append(parts[0])
+        coords.append([float(p) for p in parts[1:]])
+    return Molecule(species, coords)
+
+def rmsd_str(mol1, mol2):
+    mol1 = mol_string_to_pymatgen(mol1)
+    mol2 = mol_string_to_pymatgen(mol2)
+    
+    return pymatgen_rmsd(mol1,mol2)
