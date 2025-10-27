@@ -452,6 +452,103 @@ class EnSB(nn.Module):
         stack_bwd_traj = lambda z: torch.flip(torch.stack(z, dim=1), dims=(1,))
         return stack_bwd_traj(xs), stack_bwd_traj(xs)
     
+    def compute_log_prob(
+        self, 
+        representations, 
+        conditions, 
+        sample,
+        prev_sample,
+        time_step,
+        prev_time_step,             
+        sde_type: str = 'sde',
+        noise_level: float = 0.01
+        ):
+        
+        for repre in representations:
+            print(repre['mask'])
+            break
+            
+        fragments_nodes = [repr["size"] for repr in representations]
+        n_frag_switch = get_n_frag_switch(fragments_nodes)
+        
+        counts = fragments_nodes[0]
+        elements_to_repeat = torch.arange(len(counts)).to(counts.device)
+        masks = [torch.repeat_interleave(elements_to_repeat, counts) for _ in representations]
+        print(masks[0])
+        combined_mask = torch.cat(masks)
+        edge_index = get_edges_index(combined_mask, remove_self_edge=True)
+        
+        xh_t = [
+            torch.cat(
+                [repre[feature_type] for feature_type in FEATURE_MAPPING],
+                dim=1,
+            )
+            for repre in representations
+        ]
+        
+        _cond = conditions["condition"] if self.ts_guess else conditions
+        t_size = representations[self.idx]["size"].size(0)
+        
+        xh_t[self.idx][:, : self.pos_dim] = sample
+        
+        t_float = time_step / self.T
+        tt = torch.full((t_size, 1), t_float, device=sample.device)
+        
+        net_eps_xh, _ = self.dynamics(
+                xh=xh_t,
+                edge_index=edge_index,
+                t=tt,
+                conditions=_cond,
+                n_frag_switch=n_frag_switch,
+                combined_mask=combined_mask,
+                edge_attr=None,
+        )
+        velocity = net_eps_xh[self.idx][:, :self.pos_dim].float()
+        
+        sigma_t = time_step / self.T
+        sigma_t_prev = prev_time_step / self.T
+        dt = sigma_t_prev - sigma_t  # dt 是负值 (-1/T)
+
+        if sde_type == 'sde':
+            sigma_max = (self.T - 1) / self.T
+            safe_sigma_t = sigma_t if sigma_t < 1.0 else sigma_max
+            std_dev_t = math.sqrt(safe_sigma_t / (1 - safe_sigma_t)) * noise_level
+
+            term1 = sample * (1 + std_dev_t**2 / (2 * safe_sigma_t) * dt)
+            term2 = velocity * (1 + std_dev_t**2 * (1 - safe_sigma_t) / (2 * safe_sigma_t)) * dt
+            prev_sample_mean = term1 + term2
+            
+            sampling_std = std_dev_t * math.sqrt(-dt)
+
+            log_prob = (
+                -((prev_sample.detach() - prev_sample_mean) ** 2) / (2 * sampling_std**2)
+                - math.log(sampling_std)
+                - math.log(math.sqrt(2 * math.pi))
+            )
+
+        elif sde_type == 'cps':
+            std_dev_t = sigma_t_prev  * math.sin(noise_level * math.pi / 2)
+            
+            pred_original_sample = sample - sigma_t * velocity
+            noise_estimate = sample + velocity * (1 - sigma_t)
+            
+            variance_term = sigma_t_prev**2 - std_dev_t**2
+            term1 = pred_original_sample * (1 - sigma_t_prev)
+            term2 = noise_estimate * torch.sqrt(torch.clamp(variance_term, min=1e-8))
+            prev_sample_mean = term1 + term2
+
+            sampling_std = std_dev_t
+
+            log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
+        
+        else:
+            raise ValueError(f"Unknown sde_type: {sde_type}")
+        
+        log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+        
+        return log_prob, prev_sample_mean, std_dev_t
+        
+    
     @torch.no_grad()
     def sample_with_log_prob(
         self, 
@@ -482,8 +579,10 @@ class EnSB(nn.Module):
         """
         
         # 1. 准备采样所需的数据
+        
         masks = [repre["mask"] for repre in representations]
         combined_mask = torch.cat(masks)
+        print(combined_mask.shape)
         edge_index = get_edges_index(combined_mask, remove_self_edge=True)
         fragments_nodes = [repr["size"] for repr in representations]
         n_frag_switch = get_n_frag_switch(fragments_nodes)

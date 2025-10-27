@@ -6,6 +6,7 @@ from tqdm import tqdm
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
 from reactot.analyze.rmsd import pymatgen_rmsd, rmsd_str
+import reactot.diffusion._utils as utils
 
 
 from ts_rl.sampler import KRepeatSampler
@@ -228,8 +229,6 @@ def main(args):
             reward_list = []
             target_mol_list = []
             predict_mol_list = []
-            rmsd_list_1 = []
-            rmsd_list_2 = []
 
             for traj, target, idx in zip(traj_bath, target_batch, idx_batch):
                 
@@ -288,7 +287,7 @@ def main(args):
                 3 indictes the p1, p2 and (p1+p2)/2
             conditions[tensor]: [N,1]
             trajs[list]: [N]*tensor of vary size
-            log_probs[tensor]: [N,2]
+            log_probs[tensor]: [N,T]
             rewards[tensor]: [N]
             advantages[tensor]: [N]
         '''
@@ -311,14 +310,22 @@ def main(args):
                 desc=f"Epoch {global_epoch}.{inner_epoch_id}: training",
                 position=0,
             ):
-                train_timesteps = [step_index  for step_index in range(args.train_timestep_num)]
-                for k in train_timesteps:
+                train_timesteps = utils.space_indices(reference_model.ddpm.T, args.sample_time_step + 1)
+                train_timesteps = train_timesteps[::-1]
+                for k in range(args.sample_time_step):
                     advantages = torch.clamp(
                             sub_sample["advantages"],
                             -args.adv_clip_max,
                             args.adv_clip_max,
                         )
-                    
+                    print(sub_sample['representations'][0]['pos'].shape)
+                    sample = torch.cat([ traj[k] for traj in sub_sample['trajs']], dim=0)
+                    prev_sample = torch.cat([ traj[k+1] for traj in sub_sample['trajs']], dim=0)
+                    # log_prob: list [float], len=batch_size
+                    # prev_sample_mean: list [(num_atom, 3)], len=batch_size
+                    # std_dev_t: float
+                    log_prob, prev_sample_mean, std_dev_t = reference_model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
+                                                                    time_step=train_timesteps[k], prev_time_step=train_timesteps[k+1])
 
                     assert None
 
@@ -329,11 +336,11 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--repeat_k",     type=int,   default=2)
+    parser.add_argument("--repeat_k",     type=int,   default=1)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=50)
-    parser.add_argument("--sample_batch_size",    type=int,   default=128)
-    parser.add_argument("--train_batch_size",     type=int,   default=16)
+    parser.add_argument("--sample_time_step",     type=int,   default=10)
+    parser.add_argument("--sample_batch_size",    type=int,   default=32)
+    parser.add_argument("--train_batch_size",     type=int,   default=2)
     parser.add_argument("--train_epoch",     type=int,   default=16)
     parser.add_argument("--train_batch_num",     type=int,   default=16)
     parser.add_argument("--rl_type",     type=str,   default='grpo')

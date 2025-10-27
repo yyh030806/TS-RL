@@ -1071,7 +1071,29 @@ class SBModule(LightningModule):
             final_logps.append(final_tensor)
 
         return final_trajectories, final_logps, final_targets, final_idx
+    
+    def sample_log_prob(
+        self, 
+        representations, 
+        conditions, 
+        sample,
+        prev_sample,
+        prev_time_step,             
+        time_step
+    ):
+        x0, x1, cond, x0_size, x0_other = self.ddpm.sample_batch(
+            representations, conditions, return_timesteps=False, training=False)
         
+        log_prob, prev_sample_mean, std_dev_t = self.ddpm.compute_log_prob(representations, conditions, sample, prev_sample, time_step, prev_time_step)
+        
+        atom_counts = x0_size.tolist()
+        final_prev_sample_mean_list = torch.split(prev_sample_mean, atom_counts, dim=0)
+        log_prob_list = torch.split(log_prob, atom_counts, dim=0)
+        final_log_prob_list = []
+        for log_prob in log_prob_list:
+            final_log_prob_list.append(torch.mean(log_prob, dim=0))
+        
+        return final_log_prob_list, final_prev_sample_mean_list, std_dev_t
 
     @torch.no_grad()
     def eval_sample_batch(
