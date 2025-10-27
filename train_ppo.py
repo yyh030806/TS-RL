@@ -14,7 +14,7 @@ from ts_rl.energy_scorer import EnergyScorer
 from ts_rl.stat_tracking import PerMoleculeStatTracker
 
 
-torch.serialization.add_safe_globals([LEFTNet])
+# torch.serialization.add_safe_globals([LEFTNet])
 
 device = 'cuda'
 
@@ -215,6 +215,8 @@ def main(args):
 
     scorer_1 = EnergyScorer(method='xtb')
 
+    optimizer = torch.optim.AdamW(model.parameters(), args.lr, betas=[0.9, 0.99], weight_decay=args.weight_decay)
+
     global_epoch=0
     while True:
         # sample
@@ -291,7 +293,7 @@ def main(args):
             rewards[tensor]: [N]
             advantages[tensor]: [N]
         '''
-        samples = process_samples(samples, log=True)
+        samples = process_samples(samples, log=False)
 
         # train
         model.train()
@@ -310,24 +312,55 @@ def main(args):
                 desc=f"Epoch {global_epoch}.{inner_epoch_id}: training",
                 position=0,
             ):
-                train_timesteps = utils.space_indices(reference_model.ddpm.T, args.sample_time_step + 1)
+                train_timesteps = utils.space_indices(model.ddpm.T, args.sample_time_step + 1)
                 train_timesteps = train_timesteps[::-1]
                 for k in range(args.sample_time_step):
-                    advantages = torch.clamp(
-                            sub_sample["advantages"],
-                            -args.adv_clip_max,
-                            args.adv_clip_max,
-                        )
-                    print(sub_sample['representations'][0]['pos'].shape)
+
                     sample = torch.cat([ traj[k] for traj in sub_sample['trajs']], dim=0)
                     prev_sample = torch.cat([ traj[k+1] for traj in sub_sample['trajs']], dim=0)
                     # log_prob: list [float], len=batch_size
                     # prev_sample_mean: list [(num_atom, 3)], len=batch_size
                     # std_dev_t: float
-                    log_prob, prev_sample_mean, std_dev_t = reference_model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
+                    log_prob, prev_sample_mean, std_dev_t = model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
                                                                     time_step=train_timesteps[k], prev_time_step=train_timesteps[k+1])
 
-                    assert None
+                    with torch.no_grad():
+                        _, prev_sample_mean_ref, _ = reference_model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
+                                                                    time_step=train_timesteps[k], prev_time_step=train_timesteps[k+1])
+                    
+                    advantages = torch.clamp(
+                            sub_sample["advantages"],
+                            -args.adv_clip_max,
+                            args.adv_clip_max,
+                        )
+                    
+                    log_prob = torch.stack(log_prob)
+                    ratio = torch.exp(log_prob - sub_sample["log_probs"][:,k])
+                    unclipped_loss = -advantages * ratio
+                    clipped_loss = -advantages * torch.clamp(
+                        ratio,
+                        1.0 - args.clip_range,
+                        1.0 + args.clip_range,
+                    )
+                    policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                    
+                    prev_means = torch.stack([t.mean() for t in prev_sample_mean])
+                    prev_means_ref = torch.stack([t.mean() for t in prev_sample_mean_ref])
+
+                    # print(prev_means.shape)
+                    # print(prev_means_ref.shape)
+                    if args.beta > 0:
+                        kl_loss = ((prev_means - prev_means_ref) ** 2) / (2 * std_dev_t ** 2)
+                        kl_loss = torch.mean(kl_loss)
+                        loss = policy_loss + args.beta * kl_loss
+                    else:
+                        loss = policy_loss
+                    
+                    print(f'loss:{loss}')
+
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
 
 
         global_epoch += 1
@@ -338,18 +371,18 @@ if __name__ == "__main__":
     
     parser.add_argument("--repeat_k",     type=int,   default=1)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=10)
+    parser.add_argument("--sample_time_step",     type=int,   default=4)
     parser.add_argument("--sample_batch_size",    type=int,   default=32)
     parser.add_argument("--train_batch_size",     type=int,   default=2)
     parser.add_argument("--train_epoch",     type=int,   default=16)
     parser.add_argument("--train_batch_num",     type=int,   default=16)
     parser.add_argument("--rl_type",     type=str,   default='grpo')
 
-    parser.add_argument("--train_timestep_num",     type=int,   default=10)
+    parser.add_argument("--train_timestep_num",     type=int,   default=4)
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
+    parser.add_argument("--clip_range", type=float, default=0.1)
+    parser.add_argument("--beta", type=float, default=1)
 
-
-    
     parser.add_argument("--checkpoint_path",     type=str, default='./reactot-pretrained.ckpt')
 
     # ei
@@ -361,6 +394,12 @@ if __name__ == "__main__":
     parser.add_argument("--method",         type=str,   default="midpoint") 
     parser.add_argument("--atol",           type=float, default=1e-2)
     parser.add_argument("--rtol",           type=float, default=1e-2)
+
+    # optimizer
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-3)
+    
+
 
     args = parser.parse_args()
     main(args)
