@@ -460,7 +460,7 @@ class EnSB(nn.Module):
         conditions: dict,
         nfe: Optional[int] = None,
         sde_type: str = 'sde',
-        noise_level: float = 0.7,
+        noise_level: float = 0.01,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         """
         使用反向 SDE 过程进行采样，并记录每一步的对数概率。
@@ -513,7 +513,7 @@ class EnSB(nn.Module):
         all_log_probs = []
         
         # 从 T-1 到 1 进行反向采样
-        for t_index in steps:
+        for i, t_index in enumerate(steps):
             if t_index == 0:
                 continue
 
@@ -533,13 +533,13 @@ class EnSB(nn.Module):
                     combined_mask=combined_mask,
                     edge_attr=None,
             )
-            model_outputs = net_eps_xh[self.idx][:, :self.pos_dim].float()
+            velocity = net_eps_xh[self.idx][:, :self.pos_dim].float()
             
             # ------------------- SDE Step Logic Begins Here -------------------
             
             # 5. 准备 SDE 步骤所需的参数
             sigma_t = t_index / self.T
-            sigma_t_prev = (t_index - 1) / self.T
+            sigma_t_prev = (steps[i+1]) / self.T
             dt = sigma_t_prev - sigma_t  # dt 是负值 (-1/T)
 
             if sde_type == 'sde':
@@ -551,14 +551,14 @@ class EnSB(nn.Module):
 
                 # 5.2 计算上一步样本的均值 (prev_sample_mean)
                 term1 = sample * (1 + std_dev_t**2 / (2 * safe_sigma_t) * dt)
-                term2 = model_outputs * (1 + std_dev_t**2 * (1 - safe_sigma_t) / (2 * safe_sigma_t)) * dt
+                term2 = velocity * (1 + std_dev_t**2 * (1 - safe_sigma_t) / (2 * safe_sigma_t)) * dt
                 prev_sample_mean = term1 + term2
                 
                 # 5.3 计算用于采样的高斯分布的标准差
                 sampling_std = std_dev_t * math.sqrt(-dt)
 
                 # 5.4 生成上一步的样本
-                noise = torch.randn_like(model_outputs)
+                noise = torch.randn_like(velocity)
                 prev_sample = prev_sample_mean + sampling_std * noise
 
                 # 5.5 计算对数概率 log p(prev_sample | sample)
@@ -573,8 +573,8 @@ class EnSB(nn.Module):
                 std_dev_t = sigma_t_prev  * math.sin(noise_level * math.pi / 2)
                 
                 # 5.2 估计 x0 和 x1
-                pred_original_sample = sample - sigma_t * model_outputs
-                noise_estimate = sample + model_outputs * (1 - sigma_t)
+                pred_original_sample = sample - sigma_t * velocity
+                noise_estimate = sample + velocity * (1 - sigma_t)
                 
                 # 5.3 计算上一步样本的均值 (prev_sample_mean)
                 # 使用 torch.sqrt 时确保内部值为正
@@ -587,7 +587,7 @@ class EnSB(nn.Module):
                 sampling_std = std_dev_t
 
                 # 5.5 生成上一步的样本
-                noise = torch.randn_like(model_outputs)
+                noise = torch.randn_like(velocity)
                 prev_sample = prev_sample_mean + sampling_std * noise
 
                 # 5.6 计算对数概率 (在这里忽略了常数项)
