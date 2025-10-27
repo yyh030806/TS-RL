@@ -4,6 +4,7 @@ from typing import List, Tuple
 from reactot.analyze.geomopt import calc_deltaE
 import time
 
+AU2KCALMOL = 627.509608
 AU2EV = 27.2114
 
 def parse_geom_string(geom_string: str) -> Tuple[List[str], List[List[float]]]:
@@ -70,7 +71,7 @@ def calc_deltaE_xtb(geom_string1: str, geom_string2: str) -> float:
 
     # --- 计算能量差并进行单位转换 ---
     delta_e_au = energy2_au - energy1_au
-    delta_e_ev = delta_e_au * AU2EV
+    delta_e_ev = delta_e_au * AU2KCALMOL
     
     return delta_e_ev
 
