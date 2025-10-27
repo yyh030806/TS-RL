@@ -137,6 +137,8 @@ def reshuffle(samples, perm, device):
 
 
 
+import torch
+
 def create_batches(samples, batch_size, device):
     total_size = samples['conditions'].shape[0]
     num_batches = (total_size + batch_size - 1) // batch_size  # 向上取整
@@ -153,33 +155,41 @@ def create_batches(samples, batch_size, device):
         for k in samples.keys():
             if isinstance(samples[k], torch.Tensor):
                 batch[k] = samples[k][start_idx:end_idx]
-                
+            
             elif isinstance(samples[k], list):
                 batch[k] = samples[k][start_idx:end_idx]
-                
-            elif isinstance(samples[k], dict):
-                if k == 'representations':
-                    batch[k] = {}
-    
-                    batch[k]['size'] = samples[k]['size'][:, start_idx:end_idx]  # [3, batch_size]
+            
+            elif isinstance(samples[k], dict) and k == 'representations':
+                rep = samples[k]
+                batch[k] = []  # list of len 3
 
-                    zero_tensor = torch.zeros(1, device=device).long()
-                    batch_sizes = samples[k]['size'][0, start_idx:end_idx]  # 当前batch的原子数
+                # 每个“分子样本”对应一行
+                for i in range(3):
+                    rep_i = {}
 
+                    # size: [3, total_batch] → [batch]
+                    rep_i['size'] = rep['size'][i, start_idx:end_idx]
+
+                    # 当前batch每个样本的原子数
+                    batch_sizes = rep_i['size']
                     if start_idx == 0:
                         global_start = 0
                     else:
-                        global_start = samples[k]['size'][0, :start_idx].sum().item()
+                        global_start = rep['size'][i, :start_idx].sum().item()
                     global_end = global_start + batch_sizes.sum().item()
-                    
-                    batch[k]['pos'] = samples[k]['pos'][:, global_start:global_end, :]
-                    batch[k]['one_hot'] = samples[k]['one_hot'][:, global_start:global_end, :]
-                    batch[k]['charge'] = samples[k]['charge'][:, global_start:global_end, :]
-                    batch[k]['mask'] = samples[k]['mask'][:, global_start:global_end]
+
+                    # pos, one_hot, charge, mask 去掉第一维
+                    rep_i['pos'] = rep['pos'][i, global_start:global_end, :]
+                    rep_i['one_hot'] = rep['one_hot'][i, global_start:global_end, :]
+                    rep_i['charge'] = rep['charge'][i, global_start:global_end, :]
+                    rep_i['mask'] = rep['mask'][i, global_start:global_end]
+
+                    batch[k].append(rep_i)
         
         batches.append(batch)
     
     return batches
+
 
 
 
@@ -244,7 +254,6 @@ def main(args):
                 }
             )
 
-
         '''
             representations[dict]:
                 size: [3,N]
@@ -285,6 +294,8 @@ def main(args):
                             -args.adv_clip_max,
                             args.adv_clip_max,
                         )
+                    
+
                     assert None
 
 
