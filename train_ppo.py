@@ -5,13 +5,15 @@ from tqdm import tqdm
 
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
+from reactot.analyze.rmsd import pymatgen_rmsd, rmsd_str
+
 
 from ts_rl.sampler import KRepeatSampler
 from ts_rl.energy_scorer import EnergyScorer
 from ts_rl.stat_tracking import PerMoleculeStatTracker
 
 
-# torch.serialization.add_safe_globals([LEFTNet])
+torch.serialization.add_safe_globals([LEFTNet])
 
 device = 'cuda'
 
@@ -200,8 +202,7 @@ def main(args):
 
     samples = []
 
-    scorer = EnergyScorer()
-    
+    scorer_1 = EnergyScorer(method='xtb')
 
     global_epoch=0
     while True:
@@ -209,23 +210,46 @@ def main(args):
         model.eval()
         for batch in tqdm(train_loader):
             representations, conditions = batch
+            # result = model.eval_sample_batch(batch)
+            
             traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
 
             # compute rewards
             reward_list = []
             target_mol_list = []
             predict_mol_list = []
+            rmsd_list_1 = []
+            rmsd_list_2 = []
 
             for traj, target, idx in zip(traj_bath, target_batch, idx_batch):
+                
+                # x1
+                # predict = traj[0]
+                # target_mol = decode_molecule(target, idx)
+                # predict_mol = decode_molecule(predict, idx) 
+                # reward = scorer_1(predict_mol, target_mol)
+                # print("========")
+                # print("x1")
+                # print(reward, rmsd_str(target_mol, predict_mol))
+                # rmsd_list_1.append(rmsd_str(target_mol, predict_mol))
+                
+                # x0
                 predict = traj[-1]
                 target_mol = decode_molecule(target, idx)
                 predict_mol = decode_molecule(predict, idx) 
-                # reward = scorer(predict_mol, target_mol)
+                reward = scorer_1(predict_mol, target_mol)
                 
-                reward_list.append(0)
+                # calculate rmsd
+                # print("x0")
+                # print(reward, rmsd_str(target_mol, predict_mol))
+                # rmsd_list_2.append(rmsd_str(target_mol, predict_mol))
+                                
+                reward_list.append(reward)
                 target_mol_list.append(target_mol)
                 predict_mol_list.append(predict_mol)
             
+            # print(sum(rmsd_list_1) / len(rmsd_list_1))
+            # print(sum(rmsd_list_2) / len(rmsd_list_2))
 
             tracker = PerMoleculeStatTracker()
             advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
@@ -296,14 +320,14 @@ if __name__ == "__main__":
     
     parser.add_argument("--repeat_k",     type=int,   default=2)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=2)
+    parser.add_argument("--sample_time_step",     type=int,   default=50)
     parser.add_argument("--sample_batch_size",    type=int,   default=128)
     parser.add_argument("--train_batch_size",     type=int,   default=16)
     parser.add_argument("--train_epoch",     type=int,   default=16)
     parser.add_argument("--train_batch_num",     type=int,   default=16)
     parser.add_argument("--rl_type",     type=str,   default='grpo')
 
-    parser.add_argument("--train_timestep_num",     type=int,   default=2)
+    parser.add_argument("--train_timestep_num",     type=int,   default=10)
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
 
 
