@@ -1072,6 +1072,7 @@ class SBModule(LightningModule):
 
         return final_trajectories, final_logps, final_targets, final_idx
         
+
     @torch.no_grad()
     def eval_sample_batch(
         self,
