@@ -249,8 +249,7 @@ def main(args):
                 predict = traj[-1]
                 target_mol = decode_molecule(target, idx)
                 predict_mol = decode_molecule(predict, idx) 
-                # reward = scorer_1(predict_mol, target_mol)
-                reward = random.random()
+                reward = scorer_1(predict_mol, target_mol)
                 
                 # calculate rmsd
                 # print("x0")
