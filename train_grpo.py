@@ -388,7 +388,7 @@ def main(args):
             write_xyz=False,
             bz=args.sample_batch_size,
             refpath="ref_ts",
-            max_num_batch=5，
+            max_num_batch=5,
             global_epoch=global_epoch
         )
         
