@@ -2,6 +2,7 @@ import torch
 import argparse
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import random
 
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
@@ -248,7 +249,8 @@ def main(args):
                 predict = traj[-1]
                 target_mol = decode_molecule(target, idx)
                 predict_mol = decode_molecule(predict, idx) 
-                reward = scorer_1(predict_mol, target_mol)
+                # reward = scorer_1(predict_mol, target_mol)
+                reward = random.random()
                 
                 # calculate rmsd
                 # print("x0")
@@ -262,11 +264,6 @@ def main(args):
             # print(sum(rmsd_list_1) / len(rmsd_list_1))
             # print(sum(rmsd_list_2) / len(rmsd_list_2))
 
-            tracker = PerMoleculeStatTracker()
-            advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
-            advantages = torch.tensor(advantages, device=model.device)  # [N]
-
-
             samples.append(
                 {
                     "representations": representations,
@@ -275,7 +272,7 @@ def main(args):
                     "target_mols": target_mol_list,
                     "log_probs": torch.stack(log_prob_batch).squeeze(-1),
                     "rewards": torch.tensor(reward_list, device=model.device),
-                    "advantages": advantages
+                    # "advantages": advantages
                 }
             )
 
@@ -294,6 +291,12 @@ def main(args):
             advantages[tensor]: [N]
         '''
         samples = process_samples(samples, log=False)
+
+        tracker = PerMoleculeStatTracker()
+        advantages = tracker.update(samples['target_mols'], samples['rewards'].tolist(), args.rl_type)
+        advantages = torch.tensor(advantages, device=model.device)  # [N]
+
+        samples['advantages'] = advantages
 
         # train
         model.train()
@@ -369,16 +372,16 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--repeat_k",     type=int,   default=1)
+    parser.add_argument("--repeat_k",     type=int,   default=4)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=4)
+    parser.add_argument("--sample_time_step",     type=int,   default=3)
     parser.add_argument("--sample_batch_size",    type=int,   default=32)
     parser.add_argument("--train_batch_size",     type=int,   default=2)
     parser.add_argument("--train_epoch",     type=int,   default=16)
     parser.add_argument("--train_batch_num",     type=int,   default=16)
     parser.add_argument("--rl_type",     type=str,   default='grpo')
 
-    parser.add_argument("--train_timestep_num",     type=int,   default=4)
+    parser.add_argument("--train_timestep_num",     type=int,   default=3)
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
     parser.add_argument("--clip_range", type=float, default=0.1)
     parser.add_argument("--beta", type=float, default=1)
