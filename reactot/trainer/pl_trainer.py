@@ -1279,11 +1279,10 @@ class SBModule(LightningModule):
         localpath: str = "sb/ot_ode-10/",
         refpath: str = "ref_ts/",
         max_num_batch: Optional[int] = None,
+        global_epoch: int = 0
     ):
         outputs, rmsds = [], []
-        for ii, batch in tqdm(enumerate(loader), total=len(loader)):
-            if verbose:
-                print(f"batch #{ii} / {len(loader)}")
+        for ii, batch in tqdm(enumerate(loader), total=len(loader), desc=f"Epoch {global_epoch}  : evaluting"):
             res, _rmsds = self.eval_sample_batch(
                 batch,
                 return_rmsd=True,
