@@ -463,10 +463,6 @@ class EnSB(nn.Module):
         sde_type: str = 'sde',
         noise_level: float = 0.01
         ):
-        
-        for repre in representations:
-            print(repre['mask'])
-            break
             
         fragments_nodes = [repr["size"] for repr in representations]
         n_frag_switch = get_n_frag_switch(fragments_nodes)
@@ -474,7 +470,6 @@ class EnSB(nn.Module):
         counts = fragments_nodes[0]
         elements_to_repeat = torch.arange(len(counts)).to(counts.device)
         masks = [torch.repeat_interleave(elements_to_repeat, counts) for _ in representations]
-        print(masks[0])
         combined_mask = torch.cat(masks)
         edge_index = get_edges_index(combined_mask, remove_self_edge=True)
         
@@ -582,7 +577,6 @@ class EnSB(nn.Module):
         
         masks = [repre["mask"] for repre in representations]
         combined_mask = torch.cat(masks)
-        print(combined_mask.shape)
         edge_index = get_edges_index(combined_mask, remove_self_edge=True)
         fragments_nodes = [repr["size"] for repr in representations]
         n_frag_switch = get_n_frag_switch(fragments_nodes)

@@ -2,6 +2,7 @@ import torch
 import argparse
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import numpy as np
 
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
@@ -14,7 +15,7 @@ from ts_rl.energy_scorer import EnergyScorer
 from ts_rl.stat_tracking import PerMoleculeStatTracker
 
 
-# torch.serialization.add_safe_globals([LEFTNet])
+torch.serialization.add_safe_globals([LEFTNet])
 
 device = 'cuda'
 
@@ -205,6 +206,8 @@ def main(args):
     train_sampler = KRepeatSampler(train_dataset, args.repeat_k, args.sample_batch_size)
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, collate_fn=train_dataset.collate_fn)
 
+    val_loader = reference_model.val_dataloader(bz=args.train_batch_size, shuffle=False)
+    
     sample_batch_num = len(train_loader)
     total_batch_size = sample_batch_num*args.sample_batch_size  # total sample number e.g. 2048
 
@@ -220,12 +223,13 @@ def main(args):
     global_epoch=0
     while True:
         # sample
-        model.eval()
+        old_model = model
+        old_model.eval()
         for batch in tqdm(train_loader):
             representations, conditions = batch
             # result = model.eval_sample_batch(batch)
             
-            traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
+            traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
 
             # compute rewards
             reward_list = []
@@ -266,6 +270,7 @@ def main(args):
             advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
             advantages = torch.tensor(advantages, device=model.device)  # [N]
 
+            print(advantages)
 
             samples.append(
                 {
@@ -362,23 +367,32 @@ def main(args):
                     optimizer.step()
                     optimizer.zero_grad()
 
-
+        # eval
+        model.eval()
+        res, rmsds = model.eval_rmsd(
+            val_loader,
+            write_xyz=False,
+            bz=args.sample_batch_size,
+            refpath="ref_ts",
+            localpath=f"{args.solver}-{args.method}/nfe{args.nfe}/",
+            max_num_batch=10,
+        )
+        print(f"mean={np.mean(rmsds):.5f}, median={np.median(rmsds):.5f}, {len(rmsds)=}")
+        
         global_epoch += 1
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--repeat_k",     type=int,   default=1)
+    parser.add_argument("--repeat_k",     type=int,   default=4)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=4)
-    parser.add_argument("--sample_batch_size",    type=int,   default=32)
-    parser.add_argument("--train_batch_size",     type=int,   default=2)
+    parser.add_argument("--sample_time_step",     type=int,   default=10)
+    parser.add_argument("--sample_batch_size",    type=int,   default=16)
+    parser.add_argument("--train_batch_size",     type=int,   default=16)
     parser.add_argument("--train_epoch",     type=int,   default=16)
-    parser.add_argument("--train_batch_num",     type=int,   default=16)
     parser.add_argument("--rl_type",     type=str,   default='grpo')
 
-    parser.add_argument("--train_timestep_num",     type=int,   default=4)
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
     parser.add_argument("--clip_range", type=float, default=0.1)
     parser.add_argument("--beta", type=float, default=1)
