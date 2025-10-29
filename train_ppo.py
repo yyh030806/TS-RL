@@ -3,6 +3,7 @@ import argparse
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
+import random
 
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
@@ -265,11 +266,6 @@ def main(args):
             
             # print(sum(rmsd_list_1) / len(rmsd_list_1))
             # print(sum(rmsd_list_2) / len(rmsd_list_2))
-
-            tracker = PerMoleculeStatTracker()
-            advantages = tracker.update(target_mol_list, reward_list, args.rl_type)
-            advantages = torch.tensor(advantages, device=model.device)  # [N]
-
             print(advantages)
 
             samples.append(
@@ -280,7 +276,7 @@ def main(args):
                     "target_mols": target_mol_list,
                     "log_probs": torch.stack(log_prob_batch).squeeze(-1),
                     "rewards": torch.tensor(reward_list, device=model.device),
-                    "advantages": advantages
+                    # "advantages": advantages
                 }
             )
 
@@ -299,6 +295,12 @@ def main(args):
             advantages[tensor]: [N]
         '''
         samples = process_samples(samples, log=False)
+
+        tracker = PerMoleculeStatTracker()
+        advantages = tracker.update(samples['target_mols'], samples['rewards'].tolist(), args.rl_type)
+        advantages = torch.tensor(advantages, device=model.device)  # [N]
+
+        samples['advantages'] = advantages
 
         # train
         model.train()
@@ -385,6 +387,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
+    parser.add_argument("--repeat_k",     type=int,   default=4)
     parser.add_argument("--repeat_k",     type=int,   default=4)
     
     parser.add_argument("--sample_time_step",     type=int,   default=10)
