@@ -3,7 +3,8 @@ import argparse
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
-import random
+import wandb
+import datetime
 
 from reactot.trainer.pl_trainer import SBModule
 from reactot.model.leftnet import LEFTNet
@@ -140,10 +141,6 @@ def reshuffle(samples, perm, device):
                 samples[k]['mask'] = samples[k]['mask'][:, new_atom_perm]  # [3, total_atoms]
     return samples
 
-
-
-import torch
-
 def create_batches(samples, batch_size, device):
     total_size = samples['conditions'].shape[0]
     num_batches = (total_size + batch_size - 1) // batch_size  # 向上取整
@@ -196,15 +193,31 @@ def create_batches(samples, batch_size, device):
     return batches
 
 
-
-
 def main(args):
     
+    # logger
+    project_name = "ts_rl"
+    group_name = "grpo"
+
+    current_time = datetime.datetime.now()
+    timestamp_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
+    run_name = f"{group_name}_{timestamp_str}"
+
+    wandb.init(
+        project=project_name, 
+        group=group_name, 
+        name=run_name
+    )
+    
+    wandb.init(project=project_name, group=group_name, name=run_name)
+    
+    # reference model
     reference_model = load_model(args.checkpoint_path)
     reference_model.nfe = args.sample_time_step
     
-    train_dataset = reference_model.val_dataset
-    train_sampler = KRepeatSampler(train_dataset, args.repeat_k, args.sample_batch_size)
+    # data
+    train_dataset = reference_model.train_dataset
+    train_sampler = KRepeatSampler(train_dataset, args.train_max_num, args.repeat_k, args.sample_batch_size)
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, collate_fn=train_dataset.collate_fn)
 
     val_loader = reference_model.val_dataloader(bz=args.train_batch_size, shuffle=False)
@@ -215,18 +228,20 @@ def main(args):
     model = load_model(args.checkpoint_path)
     model.nfe = args.sample_time_step
 
-    samples = []
-
+    # scorer
     scorer_1 = EnergyScorer(method='xtb')
 
     optimizer = torch.optim.AdamW(model.parameters(), args.lr, betas=[0.9, 0.99], weight_decay=args.weight_decay)
 
     global_epoch=0
     while True:
+        samples = []
+        log = {}
+        
         # sample
         old_model = model
         old_model.eval()
-        for batch in tqdm(train_loader):
+        for batch in tqdm(train_loader, desc=f"Epoch {global_epoch}  : sampling"):
             representations, conditions = batch
             # result = model.eval_sample_batch(batch)
             
@@ -266,8 +281,6 @@ def main(args):
             
             # print(sum(rmsd_list_1) / len(rmsd_list_1))
             # print(sum(rmsd_list_2) / len(rmsd_list_2))
-            print(advantages)
-
             samples.append(
                 {
                     "representations": representations,
@@ -301,6 +314,8 @@ def main(args):
         advantages = torch.tensor(advantages, device=model.device)  # [N]
 
         samples['advantages'] = advantages
+        
+        log['mean_reward'] = torch.mean(samples['rewards']).item()  
 
         # train
         model.train()
@@ -354,8 +369,6 @@ def main(args):
                     prev_means = torch.stack([t.mean() for t in prev_sample_mean])
                     prev_means_ref = torch.stack([t.mean() for t in prev_sample_mean_ref])
 
-                    # print(prev_means.shape)
-                    # print(prev_means_ref.shape)
                     if args.beta > 0:
                         kl_loss = ((prev_means - prev_means_ref) ** 2) / (2 * std_dev_t ** 2)
                         kl_loss = torch.mean(kl_loss)
@@ -363,23 +376,25 @@ def main(args):
                     else:
                         loss = policy_loss
                     
-                    print(f'loss:{loss}')
-
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
 
         # eval
         model.eval()
+        model.ddpm.opt = args
         res, rmsds = model.eval_rmsd(
             val_loader,
             write_xyz=False,
             bz=args.sample_batch_size,
             refpath="ref_ts",
-            localpath=f"{args.solver}-{args.method}/nfe{args.nfe}/",
-            max_num_batch=10,
+            max_num_batch=5,
         )
-        print(f"mean={np.mean(rmsds):.5f}, median={np.median(rmsds):.5f}, {len(rmsds)=}")
+        
+        log['mean_rmsd'] = np.mean(rmsds)
+        log['median_rmsd'] = np.median(rmsds)   
+        
+        wandb.log(log)
         
         global_epoch += 1
 
@@ -387,30 +402,36 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--repeat_k",     type=int,   default=4)
-    parser.add_argument("--repeat_k",     type=int,   default=4)
+    parser.add_argument("--checkpoint_path", type=str, default='./reactot-pretrained.ckpt')
+
+    # sample
+    parser.add_argument("--repeat_k", type=int, default=4)
+    parser.add_argument("--sample_time_step", type=int, default=10)
+    parser.add_argument("--sample_batch_size", type=int, default=16)
     
-    parser.add_argument("--sample_time_step",     type=int,   default=10)
-    parser.add_argument("--sample_batch_size",    type=int,   default=16)
-    parser.add_argument("--train_batch_size",     type=int,   default=16)
-    parser.add_argument("--train_epoch",     type=int,   default=16)
-    parser.add_argument("--rl_type",     type=str,   default='grpo')
+    # train
+    parser.add_argument("--train_max_num", type=int, default=16)
+    parser.add_argument("--train_batch_size", type=int, default=16)
+    parser.add_argument("--train_epoch", type=int, default=4)
+    parser.add_argument("--rl_type", type=str, default='grpo')
 
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
     parser.add_argument("--clip_range", type=float, default=0.1)
     parser.add_argument("--beta", type=float, default=1)
-
-    parser.add_argument("--checkpoint_path",     type=str, default='./reactot-pretrained.ckpt')
-
+    
+    # eval
+    parser.add_argument("--solver", type=str, choices=["ddpm", "ei", "ode"], default="ode")
+    parser.add_argument("--nfe", type=int, default=50)
+    
     # ei
-    parser.add_argument("--order",          type=int, default=1)
-    parser.add_argument("--diz",            type=str, default="linear", choices=["linear", "quad"])
-    parser.add_argument("--normalize",      action="store_true")
+    parser.add_argument("--order", type=int, default=1)
+    parser.add_argument("--diz", type=str, default="linear", choices=["linear", "quad"])
+    parser.add_argument("--normalize", action="store_true")
 
     # ode
-    parser.add_argument("--method",         type=str,   default="midpoint") 
-    parser.add_argument("--atol",           type=float, default=1e-2)
-    parser.add_argument("--rtol",           type=float, default=1e-2)
+    parser.add_argument("--method", type=str, default="midpoint") 
+    parser.add_argument("--atol", type=float, default=1e-2)
+    parser.add_argument("--rtol", type=float, default=1e-2)
 
     # optimizer
     parser.add_argument("--lr", type=float, default=1e-4)
