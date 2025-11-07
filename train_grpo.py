@@ -379,18 +379,7 @@ def main(args):
                     else:
                         loss = policy_loss
                     
-<<<<<<< HEAD
                     print(f'loss:{loss}, reward:{torch.mean(sub_sample["rewards"])}')
-=======
-                    log_step = {
-                        'loss': loss,
-                        'policy_loss': policy_loss,
-                        'kl_loss': kl_loss
-                    }
-                    
-                    wandb.log(log_step)
-                    
->>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
@@ -426,24 +415,14 @@ if __name__ == "__main__":
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
-<<<<<<< HEAD
     parser.add_argument("--train_max_num", type=int, default=32)
     parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--train_epoch", type=int, default=3)
-=======
-    parser.add_argument("--train_max_num", type=int, default=200)
-    parser.add_argument("--train_batch_size", type=int, default=16)
-    parser.add_argument("--train_epoch", type=int, default=4)
->>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
     parser.add_argument("--rl_type", type=str, default='grpo')
 
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
     parser.add_argument("--clip_range", type=float, default=0.1)
-<<<<<<< HEAD
     parser.add_argument("--beta", type=float, default=0.1)
-=======
-    parser.add_argument("--beta", type=float, default=0.01)
->>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
     
     # eval
     parser.add_argument("--solver", type=str, choices=["ddpm", "ei", "ode"], default="ode")
