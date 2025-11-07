@@ -257,6 +257,82 @@ class EnSB(nn.Module):
         # pred_x0 = xt - net_out
         if clip_denoise: pred_x0.clamp_(-val, val)
         return pred_x0
+    
+    
+    def compute_xt(self, representations, conditions, t_int:int, ot_ode=True):
+        r"""
+        Computes xt
+        """
+
+        # Normalize data, take into account volume change in x.
+        representations = self.normalizer.normalize(representations)
+
+        # Sample a timestep t for each example in batch
+        # At evaluation time, loss_0 will be computed separately to decrease
+        # variance in the estimator (costs two forward passes)
+        lowest_t = 0 if self.training else 1
+
+        x0, x1, cond, x0_size, x0_other = self.sample_batch(
+            representations, conditions, return_timesteps=False, training=True)
+
+        timestep = torch.repeat_interleave(t_int, x0_size)
+        timestep = self.schedule.inflate_batch_array(
+            timestep, representations[0]["pos"]
+        )
+
+        xt = self.q_sample(timestep, x0, x1, ot_ode=ot_ode, mask=cond["ts_mask"])
+
+        return xt, x0, timestep
+    
+
+    def forward_once(self, xt, t_int, representations, conditions):
+        # num_sample = representations[0]["size"].size(0)
+        device = representations[0]["pos"].device
+        masks = [repre["mask"] for repre in representations]
+        combined_mask = torch.cat(masks)
+        edge_index = get_edges_index(combined_mask, remove_self_edge=True)
+
+        fragments_nodes = [repr["size"] for repr in representations]
+        n_frag_switch = get_n_frag_switch(fragments_nodes)
+
+        t = t_int / self.T
+
+        # Concatenate x, and h[categorical].
+        xh_t = [
+            torch.cat(
+                [repre[feature_type] for feature_type in FEATURE_MAPPING],
+                dim=1,
+            )
+            for repre in representations
+        ]
+
+        xh_t[self.idx][:, : self.pos_dim] = xt
+
+        # --- use x1_t for everything ---
+        # xh_t[0][:, : self.pos_dim] = xt
+        # xh_t[2][:, : self.pos_dim] = xt
+
+        # ---- ts_guess to R/P ---
+        # xt_r = self.q_sample(timestep, cond["r_pos"], x1, ot_ode=ot_ode, mask=cond["ts_mask"])
+        # xt_p = self.q_sample(timestep, cond["p_pos"], x1, ot_ode=ot_ode, mask=cond["ts_mask"])
+        # xh_t[0][:, : self.pos_dim] = xt_r.to(xt.device)
+        # xh_t[2][:, : self.pos_dim] = xt_p.to(xt.device)
+
+        # Neural net prediction.
+        cond = conditions["condition"] if self.ts_guess else conditions
+        net_eps_xh, _ = self.dynamics(
+            xh=xh_t,
+            edge_index=edge_index,
+            t=t,
+            conditions=cond,
+            n_frag_switch=n_frag_switch,
+            combined_mask=combined_mask,
+            edge_attr=None,  # TODO: no edge_attr is considered now
+        )
+
+        pred = net_eps_xh[self.idx][:, : self.pos_dim]
+        return pred
+
 
     def forward(
         self,

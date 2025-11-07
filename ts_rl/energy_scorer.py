@@ -1,5 +1,6 @@
 from morfeus import XTB
 from typing import List, Tuple
+import math
 
 from reactot.analyze.geomopt import calc_deltaE
 import time
@@ -42,7 +43,7 @@ def parse_geom_string(geom_string: str) -> Tuple[List[str], List[List[float]]]:
         
     return elements, coordinates
 
-def calc_deltaE_xtb(geom_string1: str, geom_string2: str) -> float:
+def calc_deltaE_xtb(geom_string1: str, geom_string2: str, use_exp=True, exp_k=None) -> float:
     """
     使用 GFN2-xTB 计算两个几何字符串之间的能量差。
 
@@ -72,7 +73,14 @@ def calc_deltaE_xtb(geom_string1: str, geom_string2: str) -> float:
     # --- 计算能量差并进行单位转换 ---
     delta_e_au = energy2_au - energy1_au
     delta_e_ev = delta_e_au * AU2KCALMOL
+
+    delta_e_ev = abs(delta_e_ev)
     
+    if use_exp:
+        assert exp_k is not None
+        delta_e_ev = exp_k*math.exp(-delta_e_ev)
+
+
     return delta_e_ev
 
 class EnergyScorer:
@@ -85,9 +93,9 @@ class EnergyScorer:
         elif method == 'dl':
             raise(NotImplementedError())
     
-    def __call__(self, st_tar, st_pred):
+    def __call__(self, st_tar, st_pred, *args, **kwargs):
 
-        return abs(self.score_func(st_tar, st_pred))
+        return abs(self.score_func(st_tar, st_pred, *args, **kwargs))
                 
 if __name__ == '__main__':
     st_tar = 'C 0.021 0.686 0.000; N 0.000 -0.784 0.000; H 0.948 1.082 0.000; H -0.474 1.082 0.821; H -0.474 1.082 -0.821; H 0.435 -1.169 0.803; H -0.435 -1.169 -0.803'

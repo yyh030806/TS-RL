@@ -62,6 +62,38 @@ class PerMoleculeStatTracker:
     def clear(self):
         self.stats = {}
 
+
+
+class PerPromptStatTracker:
+    def __init__(self, global_std=False):
+        self.global_std = global_std
+        self.stats = {}
+        self.history_prompts = set()
+
+    # exp reward is for rwr
+    def update(self, prompts, rewards, exp=False):
+        prompts = np.array(prompts)
+        rewards = np.array(rewards, dtype=np.float64)
+        unique = np.unique(prompts)
+        advantages = np.empty_like(rewards) * 0.0
+        for prompt in unique:
+            prompt_rewards = rewards[prompts == prompt]
+            if prompt not in self.stats:
+                self.stats[prompt] = []
+            self.stats[prompt].extend(prompt_rewards)
+            self.history_prompts.add(hash(prompt))  # Add hash of prompt to history_prompts
+        for prompt in unique:
+            self.stats[prompt] = np.stack(self.stats[prompt])
+            prompt_rewards = rewards[prompts == prompt]  # Fix: Recalculate prompt_rewards for each prompt
+            mean = np.mean(self.stats[prompt], axis=0, keepdims=True)
+            if self.global_std:
+                std = np.std(rewards, axis=0, keepdims=True) + 1e-4  # Use global std of all rewards
+            else:
+                std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
+            advantages[prompts == prompt] = (prompt_rewards - mean) / std
+        return advantages
+
+
 def main():
     tracker = PerMoleculeStatTracker()
     

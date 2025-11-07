@@ -14,7 +14,7 @@ import reactot.diffusion._utils as utils
 
 from ts_rl.sampler import KRepeatSampler
 from ts_rl.energy_scorer import EnergyScorer
-from ts_rl.stat_tracking import PerMoleculeStatTracker
+from ts_rl.stat_tracking import PerMoleculeStatTracker, PerPromptStatTracker
 
 
 # torch.serialization.add_safe_globals([LEFTNet])
@@ -92,7 +92,10 @@ def process_samples(samples, log=False):
             new_ele = dict()
             for subk in samples[0][k].keys():
                 new_ele[subk] = torch.cat([n[k][subk] for n in samples], dim=1)
-
+                # print(k, subk, new_ele[subk].shape)
+        elif isinstance(samples[0][k], torch.Tensor):
+            tmp = [sample[k] for sample in samples]
+            new_ele = torch.cat(tmp, dim=0)
         else:
             new_ele = torch.cat([s[k] for s in samples], dim=0)
         new_samples[k] = new_ele
@@ -121,7 +124,8 @@ def reshuffle(samples, perm, device):
         if isinstance(samples[k], torch.Tensor):
             samples[k] = samples[k][perm]
         elif isinstance(samples[k], list):
-            samples[k] = [samples[k][i] for i in perm]
+            perm_cpu_list = perm.detach().cpu().long().tolist()
+            samples[k] = [samples[k][i] for i in perm_cpu_list]
         elif isinstance(samples[k], dict):
             if k == 'representations':
                 zero_tensor = torch.zeros(1, device=device).long()
@@ -193,6 +197,7 @@ def create_batches(samples, batch_size, device):
     return batches
 
 
+
 def main(args):
     
     # logger
@@ -239,59 +244,62 @@ def main(args):
         # sample
         old_model = model
         old_model.eval()
-        for batch in tqdm(train_loader, desc=f"Epoch {global_epoch}  : sampling"):
-            representations, conditions = batch
-            # result = model.eval_sample_batch(batch)
-            
-            traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
+        with torch.no_grad():
+            for batch in tqdm(train_loader, desc=f"Epoch {global_epoch}  : sampling"):
+                representations, conditions = batch
+                # result = model.eval_sample_batch(batch)
+                
+                traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
 
-            # compute rewards
-            reward_list = []
-            target_mol_list = []
-            predict_mol_list = []
+                # compute rewards
+                reward_list = []
+                target_mol_list = []
+                predict_mol_list = []
+                predict_list = []
 
-            for traj, target, idx in zip(traj_bath, target_batch, idx_batch):
-                
-                # x1
-                # predict = traj[0]
-                # target_mol = decode_molecule(target, idx)
-                # predict_mol = decode_molecule(predict, idx) 
-                # reward = scorer_1(predict_mol, target_mol)
-                # print("========")
-                # print("x1")
-                # print(reward, rmsd_str(target_mol, predict_mol))
-                # rmsd_list_1.append(rmsd_str(target_mol, predict_mol))
-                
-                # x0
-                predict = traj[-1]
-                target_mol = decode_molecule(target, idx)
-                predict_mol = decode_molecule(predict, idx) 
-                reward = scorer_1(predict_mol, target_mol, use_exp=True, exp_k=5)
-                print(reward)
-                assert None
-                
-                # calculate rmsd
-                # print("x0")
-                # print(reward, rmsd_str(target_mol, predict_mol))
-                # rmsd_list_2.append(rmsd_str(target_mol, predict_mol))
-                                
-                reward_list.append(reward)
-                target_mol_list.append(target_mol)
-                predict_mol_list.append(predict_mol)
+                for traj, target, idx in zip(traj_bath, target_batch, idx_batch):
+                    
+                    # x1
+                    # predict = traj[0]
+                    # target_mol = decode_molecule(target, idx)
+                    # predict_mol = decode_molecule(predict, idx) 
+                    # reward = scorer_1(predict_mol, target_mol)
+                    # print("========")
+                    # print("x1")
+                    # print(reward, rmsd_str(target_mol, predict_mol))
+                    # rmsd_list_1.append(rmsd_str(target_mol, predict_mol))
+                    
+                    # x0
+                    predict = traj[-1]
+                    target_mol = decode_molecule(target, idx)
+                    predict_mol = decode_molecule(predict, idx) 
+                    reward = scorer_1(predict_mol, target_mol, use_exp=True, exp_k=5)
+                    # print(reward)
+                    
+                    # calculate rmsd
+                    # print("x0")
+                    # print(reward, rmsd_str(target_mol, predict_mol))
+                    # rmsd_list_2.append(rmsd_str(target_mol, predict_mol))
+                                    
+                    reward_list.append(reward)
+                    target_mol_list.append(target_mol)
+                    predict_mol_list.append(predict_mol)
+                    predict_list.append(predict)
             
-            # print(sum(rmsd_list_1) / len(rmsd_list_1))
-            # print(sum(rmsd_list_2) / len(rmsd_list_2))
-            samples.append(
-                {
-                    "representations": representations,
-                    "conditions":conditions,
-                    "trajs": traj_bath,
-                    "target_mols": target_mol_list,
-                    "log_probs": torch.stack(log_prob_batch).squeeze(-1),
-                    "rewards": torch.tensor(reward_list, device=model.device),
-                    # "advantages": advantages
-                }
-            )
+                # print(sum(rmsd_list_1) / len(rmsd_list_1))
+                # print(sum(rmsd_list_2) / len(rmsd_list_2))
+                samples.append(
+                    {
+                        "representations": representations,
+                        "conditions":conditions,
+                        "predict_mols": predict_mol_list,
+                        'predicts': predict_list,  # unequal size for each element
+                        # "trajs": traj_bath,
+                        "target_mols": target_mol_list,
+                        # "log_probs": torch.stack(log_prob_batch).squeeze(-1),
+                        "rewards": torch.tensor(reward_list, device=model.device),
+                    }
+                )
 
         '''
             representations[dict]:
@@ -308,14 +316,13 @@ def main(args):
             advantages[tensor]: [N]
         '''
         samples = process_samples(samples, log=False)
-
-        tracker = PerMoleculeStatTracker()
-        advantages = tracker.update(samples['target_mols'], samples['rewards'].tolist(), args.rl_type)
-        advantages = torch.tensor(advantages, device=model.device)  # [N]
-
-        samples['advantages'] = advantages
         
         log['mean_reward'] = torch.mean(samples['rewards']).item()  
+
+        stat_tracker = PerPromptStatTracker(global_std=True)
+        advantages = stat_tracker.update(samples['target_mols'], samples['rewards'].cpu())
+        advantages = torch.tensor(advantages, device=model.device)
+        samples['advantages'] = advantages
 
         # train
         model.train()
@@ -337,44 +344,73 @@ def main(args):
                 train_timesteps = utils.space_indices(model.ddpm.T, args.sample_time_step + 1)
                 train_timesteps = train_timesteps[::-1]
                 for k in range(args.sample_time_step):
+                    print_samples(sub_sample)
+                    # print(sub_sample['representations']['size'])
 
-                    sample = torch.cat([ traj[k] for traj in sub_sample['trajs']], dim=0)
-                    prev_sample = torch.cat([ traj[k+1] for traj in sub_sample['trajs']], dim=0)
-                    # log_prob: list [float], len=batch_size
-                    # prev_sample_mean: list [(num_atom, 3)], len=batch_size
-                    # std_dev_t: float
-                    log_prob, prev_sample_mean, std_dev_t = model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
-                                                                    time_step=train_timesteps[k], prev_time_step=train_timesteps[k+1])
+                    advantages_clip = torch.clamp(
+                        sub_sample["advantages"][:],
+                        -args.adv_clip_max,
+                        args.adv_clip_max,
+                    )
+                    normalized_advantages_clip = (advantages_clip / args.adv_clip_max) / 2.0 + 0.5
+                    r = torch.clamp(normalized_advantages_clip, 0, 1)
 
+                    # forward, add noise
+                    t_int = torch.tensor([k]*args.train_batch_size).to(model.device).unsqueeze(-1)
+                    xt, x0, timestep = model.ddpm.compute_xt(sub_sample['representations'], sub_sample['conditions'], t_int)
+                    # gt velocity
+                    v = model.ddpm.compute_label(timestep, x0, xt)
+
+                    # prediction by reference model
                     with torch.no_grad():
-                        _, prev_sample_mean_ref, _ = reference_model.sample_log_prob(sub_sample['representations'], sub_sample['conditions'], sample, prev_sample,
-                                                                    time_step=train_timesteps[k], prev_time_step=train_timesteps[k+1])
-                    
-                    advantages = torch.clamp(
-                            sub_sample["advantages"],
-                            -args.adv_clip_max,
-                            args.adv_clip_max,
+                        old_prediction_v = reference_model.ddpm.forward_once(xt, t_int, sub_sample['representations'], sub_sample['conditions'])
+
+                    # prediction by model
+                    prediction_v = model.ddpm.forward_once(xt, t_int, sub_sample['representations'], sub_sample['conditions'])
+
+                    # implicit positive prediction v
+                    positive_prediction_v = args.nft_beta * prediction_v + (1-args.nft_beta) * old_prediction_v.detach()
+                    negative_prediction_v = (1+args.nft_beta)*old_prediction_v.detach() - args.nft_beta * prediction_v
+
+                    # convert v to x0
+                    positive_prediction_x0 = xt - timestep * positive_prediction_v
+                    negative_prediction_x0 = xt - timestep * negative_prediction_v
+
+                    # print(positive_prediction_x0.shape, negative_prediction_x0.shape)
+
+                    # adaptive loss weight in diffusionNFT
+                    with torch.no_grad():
+                        positive_weight_factor = (
+                            torch.abs(positive_prediction_x0.double() - x0.double())
+                            .mean(dim=tuple(range(1, x0.ndim)), keepdim=True)
+                            .clip(min=0.00001)
+                        )
+                        negative_weight_factor = (
+                            torch.abs(negative_prediction_x0.double() - x0.double())
+                            .mean(dim=tuple(range(1, x0.ndim)), keepdim=True)
+                            .clip(min=0.00001)
                         )
                     
-                    log_prob = torch.stack(log_prob)
-                    ratio = torch.exp(log_prob - sub_sample["log_probs"][:,k])
-                    unclipped_loss = -advantages * ratio
-                    clipped_loss = -advantages * torch.clamp(
-                        ratio,
-                        1.0 - args.clip_range,
-                        1.0 + args.clip_range,
-                    )
-                    policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                    
-                    prev_means = torch.stack([t.mean() for t in prev_sample_mean])
-                    prev_means_ref = torch.stack([t.mean() for t in prev_sample_mean_ref])
 
-                    if args.beta > 0:
-                        kl_loss = ((prev_means - prev_means_ref) ** 2) / (2 * std_dev_t ** 2)
-                        kl_loss = torch.mean(kl_loss)
-                        loss = policy_loss + args.beta * kl_loss
-                    else:
-                        loss = policy_loss
+                    # policy loss
+                    positive_loss = ((positive_prediction_x0 - x0) ** 2 / positive_weight_factor).mean(dim=tuple(range(1, x0.ndim)))
+                    negative_loss = ((negative_prediction_x0 - x0) ** 2 / negative_weight_factor).mean(dim=tuple(range(1, x0.ndim)))
+                    
+
+                    # reward expand from atom-level to molecule-level
+                    r = r.repeat_interleave(sub_sample['representations'][0]['size'])
+
+                    ori_policy_loss = r * positive_loss / args.nft_beta + (1.0 - r) * negative_loss / args.nft_beta
+                    loss = (ori_policy_loss * args.adv_clip_max).mean()
+                    # print(loss)
+                    # print(loss.grad_fn)
+
+                    # kl loss
+                    if args.beta>0:
+                        kl_loss = ((prediction_v - old_prediction_v) ** 2).mean(
+                            dim=tuple(range(1, x0.ndim))
+                        )
+                        loss += args.beta * torch.mean(kl_loss)
                     
                     print(f'loss:{loss}, reward:{torch.mean(sub_sample["rewards"])}')
                     loss.backward()
@@ -407,8 +443,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default='./reactot-pretrained.ckpt')
 
     # sample
-    parser.add_argument("--repeat_k", type=int, default=8)
-    parser.add_argument("--sample_time_step", type=int, default=30)
+    parser.add_argument("--repeat_k", type=int, default=2)
+    parser.add_argument("--sample_time_step", type=int, default=10)
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
@@ -438,8 +474,9 @@ if __name__ == "__main__":
     # optimizer
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--weight_decay", type=float, default=1e-3)
-    
 
+    # nft related
+    parser.add_argument("--nft_beta", type=float, default=1)
 
 
     args = parser.parse_args()
