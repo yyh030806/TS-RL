@@ -84,8 +84,9 @@ def calc_deltaE_xtb(geom_string1: str, geom_string2: str, use_exp=True, exp_k=No
     return delta_e_ev
 
 class EnergyScorer:
-    def __init__(self, method: str='xtb'):
+    def __init__(self, method: str='xtb', k: float=0.5):
         self.method = method
+        self.k = k
         if method == 'xtb':
             self.score_func = calc_deltaE_xtb
         elif method == 'dft':
@@ -93,9 +94,17 @@ class EnergyScorer:
         elif method == 'dl':
             raise(NotImplementedError())
     
+<<<<<<< HEAD
     def __call__(self, st_tar, st_pred, *args, **kwargs):
 
         return abs(self.score_func(st_tar, st_pred, *args, **kwargs))
+=======
+    def __call__(self, st_tar, st_pred):
+        delatE = abs(self.score_func(st_tar, st_pred))
+        reward = math.exp(-self.k * delatE)
+        
+        return reward
+>>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
                 
 if __name__ == '__main__':
     st_tar = 'C 0.021 0.686 0.000; N 0.000 -0.784 0.000; H 0.948 1.082 0.000; H -0.474 1.082 0.821; H -0.474 1.082 -0.821; H 0.435 -1.169 0.803; H -0.435 -1.169 -0.803'

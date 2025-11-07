@@ -234,7 +234,7 @@ def main(args):
     global_epoch=0
     while True:
         samples = []
-        log = {}
+        log_global_epoch = {}
         
         # sample
         old_model = model
@@ -311,11 +311,14 @@ def main(args):
 
         tracker = PerMoleculeStatTracker()
         advantages = tracker.update(samples['target_mols'], samples['rewards'].tolist(), args.rl_type)
+        
+        print(advantages[:20])
+        
         advantages = torch.tensor(advantages, device=model.device)  # [N]
 
         samples['advantages'] = advantages
         
-        log['mean_reward'] = torch.mean(samples['rewards']).item()  
+        log_global_epoch['mean_reward'] = torch.mean(samples['rewards']).item()  
 
         # train
         model.train()
@@ -376,7 +379,18 @@ def main(args):
                     else:
                         loss = policy_loss
                     
+<<<<<<< HEAD
                     print(f'loss:{loss}, reward:{torch.mean(sub_sample["rewards"])}')
+=======
+                    log_step = {
+                        'loss': loss,
+                        'policy_loss': policy_loss,
+                        'kl_loss': kl_loss
+                    }
+                    
+                    wandb.log(log_step)
+                    
+>>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
@@ -389,14 +403,14 @@ def main(args):
             write_xyz=False,
             bz=args.sample_batch_size,
             refpath="ref_ts",
-            max_num_batch=5,
+            max_num_batch=10,
             global_epoch=global_epoch
         )
         
-        log['mean_rmsd'] = np.mean(rmsds)
-        log['median_rmsd'] = np.median(rmsds)   
+        log_global_epoch['mean_rmsd'] = np.mean(rmsds)
+        log_global_epoch['median_rmsd'] = np.median(rmsds)   
         
-        wandb.log(log)
+        wandb.log(log_global_epoch)
         
         global_epoch += 1
 
@@ -404,7 +418,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--checkpoint_path", type=str, default='./reactot-pretrained.ckpt')
+    parser.add_argument("--checkpoint_path", type=str, default='./reactot-pretrained_1.ckpt')
 
     # sample
     parser.add_argument("--repeat_k", type=int, default=8)
@@ -412,14 +426,24 @@ if __name__ == "__main__":
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
+<<<<<<< HEAD
     parser.add_argument("--train_max_num", type=int, default=32)
     parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--train_epoch", type=int, default=3)
+=======
+    parser.add_argument("--train_max_num", type=int, default=200)
+    parser.add_argument("--train_batch_size", type=int, default=16)
+    parser.add_argument("--train_epoch", type=int, default=4)
+>>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
     parser.add_argument("--rl_type", type=str, default='grpo')
 
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
     parser.add_argument("--clip_range", type=float, default=0.1)
+<<<<<<< HEAD
     parser.add_argument("--beta", type=float, default=0.1)
+=======
+    parser.add_argument("--beta", type=float, default=0.01)
+>>>>>>> 7b95df5d1b23ad233dda69f6767c0ea4807fde5e
     
     # eval
     parser.add_argument("--solver", type=str, choices=["ddpm", "ei", "ode"], default="ode")
