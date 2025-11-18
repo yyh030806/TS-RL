@@ -17,9 +17,9 @@ from ts_rl.energy_scorer import EnergyScorer
 from ts_rl.stat_tracking import PerMoleculeStatTracker, PerPromptStatTracker
 
 
-# torch.serialization.add_safe_globals([LEFTNet])
+torch.serialization.add_safe_globals([LEFTNet])
 
-device = 'cuda'
+device = 'cuda:4'
 
 def decode_molecule(pos, idx):
     """pos: (num_atom, 3), idx: (num_atom, 1)"""
@@ -202,7 +202,7 @@ def main(args):
     
     # logger
     project_name = "ts_rl"
-    group_name = "grpo"
+    group_name = "nft"
 
     current_time = datetime.datetime.now()
     timestamp_str = current_time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -215,7 +215,7 @@ def main(args):
     )
     
     # reference model
-    reference_model = load_model(args.checkpoint_path)
+    reference_model = load_model(args.checkpoint_path, device)
     reference_model.nfe = args.sample_time_step
     
     # data
@@ -228,7 +228,7 @@ def main(args):
     sample_batch_num = len(train_loader)
     total_batch_size = sample_batch_num*args.sample_batch_size  # total sample number e.g. 2048
 
-    model = load_model(args.checkpoint_path)
+    model = load_model(args.checkpoint_path, device)
     model.nfe = args.sample_time_step
 
     # scorer
@@ -273,7 +273,7 @@ def main(args):
                     predict = traj[-1]
                     target_mol = decode_molecule(target, idx)
                     predict_mol = decode_molecule(predict, idx) 
-                    reward = scorer_1(predict_mol, target_mol, use_exp=True, exp_k=5)
+                    reward = scorer_1(predict_mol, target_mol)
                     # print(reward)
                     
                     # calculate rmsd
@@ -335,6 +335,7 @@ def main(args):
             # rebatch
             batch_samples = create_batches(samples, args.train_batch_size, model.device)
 
+            total_loss = 0
 
             for j, sub_sample in tqdm(
                 list(enumerate(batch_samples)),
@@ -343,8 +344,9 @@ def main(args):
             ):
                 train_timesteps = utils.space_indices(model.ddpm.T, args.sample_time_step + 1)
                 train_timesteps = train_timesteps[::-1]
+                
                 for k in range(args.sample_time_step):
-                    print_samples(sub_sample)
+                    # print_samples(sub_sample)
                     # print(sub_sample['representations']['size'])
 
                     advantages_clip = torch.clamp(
@@ -356,7 +358,7 @@ def main(args):
                     r = torch.clamp(normalized_advantages_clip, 0, 1)
 
                     # forward, add noise
-                    t_int = torch.tensor([k]*args.train_batch_size).to(model.device).unsqueeze(-1)
+                    t_int = torch.tensor([train_timesteps[k]]*args.train_batch_size).to(model.device).unsqueeze(-1)
                     xt, x0, timestep = model.ddpm.compute_xt(sub_sample['representations'], sub_sample['conditions'], t_int)
                     # gt velocity
                     v = model.ddpm.compute_label(timestep, x0, xt)
@@ -402,6 +404,8 @@ def main(args):
 
                     ori_policy_loss = r * positive_loss / args.nft_beta + (1.0 - r) * negative_loss / args.nft_beta
                     loss = (ori_policy_loss * args.adv_clip_max).mean()
+                    # ori_policy_loss = r * positive_loss + (1.0 - r) * negative_loss
+                    # loss = ori_policy_loss.mean()
                     # print(loss)
                     # print(loss.grad_fn)
 
@@ -412,7 +416,7 @@ def main(args):
                         )
                         loss += args.beta * torch.mean(kl_loss)
                     
-                    print(f'loss:{loss}, reward:{torch.mean(sub_sample["rewards"])}')
+                    # print(f'loss:{loss}, reward:{torch.mean(sub_sample["rewards"])}')
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
@@ -443,14 +447,14 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", type=str, default='./reactot-pretrained.ckpt')
 
     # sample
-    parser.add_argument("--repeat_k", type=int, default=2)
+    parser.add_argument("--repeat_k", type=int, default=8)
     parser.add_argument("--sample_time_step", type=int, default=10)
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
-    parser.add_argument("--train_max_num", type=int, default=32)
-    parser.add_argument("--train_batch_size", type=int, default=32)
-    parser.add_argument("--train_epoch", type=int, default=3)
+    parser.add_argument("--train_max_num", type=int, default=512)
+    parser.add_argument("--train_batch_size", type=int, default=16)
+    parser.add_argument("--train_epoch", type=int, default=1)
     parser.add_argument("--rl_type", type=str, default='grpo')
 
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
@@ -472,7 +476,7 @@ if __name__ == "__main__":
     parser.add_argument("--rtol", type=float, default=1e-2)
 
     # optimizer
-    parser.add_argument("--lr", type=float, default=5e-5)
+    parser.add_argument("--lr", type=float, default=1e-7)
     parser.add_argument("--weight_decay", type=float, default=1e-3)
 
     # nft related
