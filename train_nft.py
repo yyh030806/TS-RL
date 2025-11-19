@@ -197,6 +197,12 @@ def create_batches(samples, batch_size, device):
     return batches
 
 
+def update_reference_model_ema(reference_model, current_model, eta):
+    with torch.no_grad():
+        for ref_param, curr_param in zip(reference_model.parameters(), current_model.parameters()):
+            ref_param.data.mul_(eta).add_(curr_param.data, alpha=1 - eta)
+
+
 
 def main(args):
     
@@ -433,6 +439,9 @@ def main(args):
         log['median_rmsd'] = np.median(rmsds)   
         
         wandb.log(log)
+
+        # update reference model
+        update_reference_model_ema(reference_model, model, args.ema_update_eta)
         
         global_epoch += 1
 
@@ -450,7 +459,7 @@ if __name__ == "__main__":
     # train
     parser.add_argument("--train_max_num", type=int, default=32)
     parser.add_argument("--train_batch_size", type=int, default=32)
-    parser.add_argument("--train_epoch", type=int, default=3)
+    parser.add_argument("--train_epoch", type=int, default=1)
     parser.add_argument("--rl_type", type=str, default='grpo')
 
     parser.add_argument("--adv_clip_max", type=float, default=5.0)
@@ -474,6 +483,7 @@ if __name__ == "__main__":
     # optimizer
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--weight_decay", type=float, default=1e-3)
+    parser.add_argument("--ema_update_eta", type=float, default=0.5)
 
     # nft related
     parser.add_argument("--nft_beta", type=float, default=1)
