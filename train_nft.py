@@ -457,7 +457,7 @@ if __name__ == "__main__":
 
     # sample
     parser.add_argument("--repeat_k", type=int, default=8)
-    parser.add_argument("--sample_time_step", type=int, default=10)
+    parser.add_argument("--sample_time_step", type=int, default=20)
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
@@ -485,9 +485,9 @@ if __name__ == "__main__":
     parser.add_argument("--rtol", type=float, default=1e-2)
 
     # optimizer
-    parser.add_argument("--lr", type=float, default=1e-7)
-    parser.add_argument("--weight_decay", type=float, default=1e-3)
-    parser.add_argument("--ema_update_eta", type=float, default=0.5)
+    parser.add_argument("--lr", type=float, default=1e-6)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--ema_update_eta", type=float, default=0.3)
 
     # nft related
     parser.add_argument("--nft_beta", type=float, default=1)
