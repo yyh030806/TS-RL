@@ -254,7 +254,7 @@ def main(args):
                 representations, conditions = batch
                 # result = model.eval_sample_batch(batch)
                 
-                traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
+                traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
 
                 # compute rewards
                 reward_list = []
