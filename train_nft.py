@@ -197,10 +197,10 @@ def create_batches(samples, batch_size, device):
     return batches
 
 
-def update_reference_model_ema(reference_model, current_model, eta):
+def update_model_ema(old_model, current_model, eta):
     with torch.no_grad():
-        for ref_param, curr_param in zip(reference_model.parameters(), current_model.parameters()):
-            ref_param.data.mul_(eta).add_(curr_param.data, alpha=1 - eta)
+        for old_param, curr_param in zip(old_model.parameters(), current_model.parameters()):
+            old_param.data.mul_(eta).add_(curr_param.data, alpha=1 - eta)
 
 
 
@@ -221,15 +221,15 @@ def main(args):
     )
     
     # reference model
-    reference_model = load_model(args.checkpoint_path, device)
-    reference_model.nfe = args.sample_time_step
+    old_model = load_model(args.checkpoint_path, device)
+    old_model.nfe = args.sample_time_step
     
     # data
-    train_dataset = reference_model.train_dataset
+    train_dataset = old_model.train_dataset
     train_sampler = KRepeatSampler(train_dataset, args.train_max_num, args.repeat_k, args.sample_batch_size)
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, collate_fn=train_dataset.collate_fn)
 
-    val_loader = reference_model.val_dataloader(bz=args.train_batch_size, shuffle=False)
+    val_loader = old_model.val_dataloader(bz=args.train_batch_size, shuffle=False)
     
     sample_batch_num = len(train_loader)
     total_batch_size = sample_batch_num*args.sample_batch_size  # total sample number e.g. 2048
@@ -248,7 +248,6 @@ def main(args):
         log = {}
         
         # sample
-        old_model = model
         old_model.eval()
         with torch.no_grad():
             for batch in tqdm(train_loader, desc=f"Epoch {global_epoch}  : sampling"):
@@ -371,7 +370,7 @@ def main(args):
 
                     # prediction by reference model
                     with torch.no_grad():
-                        old_prediction_v = reference_model.ddpm.forward_once(xt, t_int, sub_sample['representations'], sub_sample['conditions'])
+                        old_prediction_v = old_model.ddpm.forward_once(xt, t_int, sub_sample['representations'], sub_sample['conditions'])
 
                     # prediction by model
                     prediction_v = model.ddpm.forward_once(xt, t_int, sub_sample['representations'], sub_sample['conditions'])
@@ -445,7 +444,7 @@ def main(args):
         wandb.log(log)
 
         # update reference model
-        update_reference_model_ema(reference_model, model, args.ema_update_eta)
+        update_model_ema(old_model, model, args.ema_update_eta)
         
         global_epoch += 1
 
