@@ -17,7 +17,7 @@ from ts_rl.energy_scorer import EnergyScorer
 from ts_rl.stat_tracking import PerMoleculeStatTracker, PerPromptStatTracker
 
 
-torch.serialization.add_safe_globals([LEFTNet])
+# torch.serialization.add_safe_globals([LEFTNet])
 
 device = 'cuda:4'
 
@@ -248,14 +248,12 @@ def main(args):
         log = {}
         
         # sample
-        old_model = model
-        old_model.eval()
         with torch.no_grad():
             for batch in tqdm(train_loader, desc=f"Epoch {global_epoch}  : sampling"):
                 representations, conditions = batch
                 # result = model.eval_sample_batch(batch)
                 
-                traj_bath, log_prob_batch, target_batch, idx_batch = old_model.sample_batch_traj(batch)
+                traj_bath, log_prob_batch, target_batch, idx_batch = model.sample_batch_traj(batch)
 
                 # compute rewards
                 reward_list = []
@@ -457,7 +455,7 @@ if __name__ == "__main__":
 
     # sample
     parser.add_argument("--repeat_k", type=int, default=8)
-    parser.add_argument("--sample_time_step", type=int, default=20)
+    parser.add_argument("--sample_time_step", type=int, default=10)
     parser.add_argument("--sample_batch_size", type=int, default=32)
     
     # train
