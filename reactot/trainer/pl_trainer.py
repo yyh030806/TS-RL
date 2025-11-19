@@ -881,7 +881,7 @@ class SBModule(LightningModule):
                     f"train_rpsb_all{ft}",  # for transition1x
                     # f"train_xtb{ft}",  # RGD1 and RGD1-xtb
                 ),
-                # device=device,
+                device=device,
                 **self.training_config,
             )
             self.training_config["reflection"] = False  # Turn off reflection in val.
@@ -891,7 +891,7 @@ class SBModule(LightningModule):
                     f"valid_rpsb_all{ft}",  # for transition1x
                     # f"valid_xtb{ft}",  # RGD1 and RGD1-xtb
                 ),
-                # device=device,
+                device=device,
                 **self.training_config,
             )
 

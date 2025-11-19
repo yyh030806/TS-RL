@@ -288,7 +288,12 @@ class EnSB(nn.Module):
     def forward_once(self, xt, t_int, representations, conditions):
         # num_sample = representations[0]["size"].size(0)
         device = representations[0]["pos"].device
-        masks = [repre["mask"] for repre in representations]
+        fragments_nodes = [repr["size"] for repr in representations]
+        n_frag_switch = get_n_frag_switch(fragments_nodes)
+        
+        counts = fragments_nodes[0]
+        elements_to_repeat = torch.arange(len(counts)).to(counts.device)
+        masks = [torch.repeat_interleave(elements_to_repeat, counts) for _ in representations]
         combined_mask = torch.cat(masks)
         edge_index = get_edges_index(combined_mask, remove_self_edge=True)
 
